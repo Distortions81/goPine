@@ -3,11 +3,12 @@ package main
 
 import (
 	"fmt"
+	"goPine/tinyfont"
+	"goPine/tinyfont/freemono"
 	"image/color"
 	"time"
 
 	"github.com/aykevl/go-smartwatch"
-	"github.com/conejoninja/tinyfont"
 )
 
 var watch *smartwatch.Watch
@@ -17,7 +18,15 @@ func main() {
 	width, height := watch.Size()
 
 	// Pick an appropriate font.
-	font := &tinyfont.Org01 // fallback font
+	font := &tinyfont.Picopixel // fallback font
+	fonts := []*tinyfont.Font{&freemono.Bold9pt7b, &freemono.Bold12pt7b, &freemono.Bold18pt7b, &freemono.Bold24pt7b}
+	for _, f := range fonts {
+		// If the font fits on this screen, use it.
+		lineWidth, _ := tinyfont.LineWidth(f, "00:00")
+		if int16(lineWidth) <= width {
+			font = f
+		}
+	}
 	fontHeight := int16(font.Glyphs['0'].Height)
 
 	// Draw the current time.

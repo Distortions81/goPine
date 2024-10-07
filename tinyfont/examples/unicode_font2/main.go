@@ -4,10 +4,10 @@ import (
 	"image/color"
 	"time"
 
-	tinyfont "goPine/tinyFont"
+	tinyfont "goPine/tinyfont"
 
-	"tinygo.org/x/tinyfont/examples/initdisplay"
-	"tinygo.org/x/tinyfont/notosans"
+	"goPine/tinyfont/examples/initdisplay"
+	"goPine/tinyfont/notosans"
 )
 
 func main() {

@@ -4,7 +4,7 @@ package const2bit
 import (
 	"image/color"
 
-	tinyfont "goPine/tinyFont"
+	tinyfont "goPine/tinyfont"
 
 	"tinygo.org/x/drivers"
 )

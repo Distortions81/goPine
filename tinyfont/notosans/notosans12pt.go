@@ -2,7 +2,7 @@
 
 package notosans
 
-import tinyfont "goPine/tinyFont"
+import tinyfont "goPine/tinyfont"
 
 var Notosans12pt = tinyfont.Font{
 	BBox: [4]int8{14, 15, -1, -12},

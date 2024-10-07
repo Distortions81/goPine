@@ -4,13 +4,13 @@ import (
 	"image/color"
 	"time"
 
-	"tinygo.org/x/tinyfont/examples/initdisplay"
-	"tinygo.org/x/tinyfont/freemono"
-	"tinygo.org/x/tinyfont/freesans"
-	"tinygo.org/x/tinyfont/freeserif"
-	"tinygo.org/x/tinyfont/gophers"
+	"goPine/tinyfont/examples/initdisplay"
+	"goPine/tinyfont/freemono"
+	"goPine/tinyfont/freesans"
+	"goPine/tinyfont/freeserif"
+	"goPine/tinyfont/gophers"
 
-	tinyfont "goPine/tinyFont"
+	tinyfont "goPine/tinyfont"
 )
 
 func main() {

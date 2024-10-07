@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unsafe"
 
-	tinyfont "goPine/tinyFont"
+	tinyfont "goPine/tinyfont"
 
 	"github.com/hajimehoshi/go-jisx0208"
 	"github.com/sago35/go-bdf"

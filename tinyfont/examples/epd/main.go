@@ -6,10 +6,11 @@ import (
 
 	"image/color"
 
-	tinyfont "goPine/tinyFont"
+	tinyfont "goPine/tinyfont"
+
+	"goPine/tinyfont/freemono"
 
 	"tinygo.org/x/drivers/waveshare-epd/epd2in13x"
-	"tinygo.org/x/tinyfont/freemono"
 )
 
 var display epd2in13x.Device

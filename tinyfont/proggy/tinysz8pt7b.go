@@ -1,6 +1,6 @@
 package proggy
 
-import tinyfont "goPine/tinyFont"
+import tinyfont "goPine/tinyfont"
 
 var TinySZ8pt7b = tinyfont.Font{
 	BBox: [4]int8{6, 10, 0, -7},

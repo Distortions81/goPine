@@ -1,6 +1,7 @@
 module goPine
 
-go 1.23.1
+go 1.26.6
+toolchain go1.26.6
 
 require (
 	github.com/aykevl/go-smartwatch v0.0.0-20191106230747-e6e9277e0bb8

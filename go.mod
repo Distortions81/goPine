@@ -1,14 +1,13 @@
 module goPine
 
 go 1.26.6
-toolchain go1.26.6
 
 require (
 	github.com/aykevl/go-smartwatch v0.0.0-20191106230747-e6e9277e0bb8
 	github.com/hajimehoshi/go-jisx0208 v1.0.0
 	github.com/sago35/go-bdf v0.0.0-20200313142241-6c17821c91c4
 	golang.org/x/image v0.0.0-20210628002857-a66eb6448b8d
-	tinygo.org/x/drivers v0.28.0
+	tinygo.org/x/drivers v0.36.0
 )
 
 require (

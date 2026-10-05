@@ -1,8 +1,8 @@
 # goPine
 
 goPine is a simple digital clock for the PineTime smartwatch, written in Go
-with [TinyGo](https://tinygo.org/) and
-[go-smartwatch](https://github.com/aykevl/go-smartwatch).
+with [TinyGo](https://tinygo.org/). It also includes an SDL2 desktop simulator
+that uses the same clock and font rendering code as the watch build.
 
 ## Desktop simulator
 
@@ -19,6 +19,37 @@ used by the watch build.
 
 ## Requirements
 
-- Go
-- SDL2 development libraries
+- Go 1.27.1 or newer in the Go 1.27 release line
+- TinyGo 0.42.0
+- SDL2 development libraries (desktop simulator only)
 
+On Debian or Ubuntu, install SDL2 with:
+
+```sh
+sudo apt install libsdl2-dev
+```
+
+## PineTime firmware
+
+Build a flashable PineTime image with TinyGo's current `pinetime` target:
+
+```sh
+tinygo build -target=pinetime -o goPine.hex .
+```
+
+Flash it with the programmer configured for your PineTime development setup:
+
+```sh
+tinygo flash -target=pinetime .
+```
+
+The PineTime does not have a battery-backed real-time clock. The displayed
+time therefore depends on the clock value supplied by the firmware environment.
+
+## Verification
+
+```sh
+go test ./...
+go vet ./...
+tinygo build -target=pinetime -o /tmp/goPine.hex .
+```

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install --yes libsdl2-dev
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Check module files
+        run: go mod tidy -diff
+      - name: Build simulator
+        run: go build .
+
+  pinetime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: acifani/setup-tinygo@v3
+        with:
+          tinygo-version: "0.42.0"
+          install-binaryen: "false"
+      - name: Build PineTime firmware
+        run: tinygo build -target=pinetime -o goPine.hex .

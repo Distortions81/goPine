@@ -11,6 +11,20 @@ type clockDisplay interface {
 	drivers.Displayer
 	FillScreen(color.RGBA)
 	PowerStatus() powerStatus
-	Wait(time.Duration) (bool, error)
+	Wait(time.Duration) (inputEvent, error)
 	Close() error
+}
+
+type inputKind uint8
+
+const (
+	inputRefresh inputKind = iota
+	inputWake
+	inputTap
+	inputQuit
+)
+
+type inputEvent struct {
+	Kind inputKind
+	X, Y int16
 }

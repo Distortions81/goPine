@@ -40,4 +40,12 @@ jobs:
           tinygo-version: "0.42.0"
           install-binaryen: "false"
       - name: Build PineTime firmware
-        run: tinygo build -target=pinetime -ldflags="-X main.firmwareTime=00:00:00" -o goPine.hex .
+        run: tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=00:00:00" -o goPine.hex .
+      - name: Build InfiniTime-compatible OTA package
+        env:
+          FIRMWARE_TIME: "00:00:00"
+        run: bash scripts/build-ota.sh 0.2.0
+      - name: Build wired recovery setup
+        env:
+          FIRMWARE_TIME: "00:00:00"
+        run: bash scripts/build-ota.sh --bootstrap 0.2.0

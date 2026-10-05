@@ -40,6 +40,28 @@ func run() error {
 		}
 	}
 	fontHeight := int16(font.GetGlyph('0').Info().Height)
+	ui := newWatchUI(firmwareState())
+	progress := func(title string) func(int) {
+		last := -1
+		return func(percent int) {
+			if percent/5 == last {
+				return
+			}
+			last = percent / 5
+			display.FillScreen(black)
+			centered(display, &freemono.Bold9pt7b, 65, title, white)
+			centered(display, &freemono.Bold24pt7b, 130, fmt.Sprintf("%d%%", percent), white)
+			centered(display, &freemono.Bold9pt7b, 175, "Keep power connected", muted)
+			_ = display.Display()
+		}
+	}
+	if provisioningBuild && !updatePowerOK(display.PowerStatus()) {
+		ui.showMessage("Charge to at least 20 percent. Reboot to retry setup.")
+	} else if err := prepareFirmware(progress("Installing recovery")); err != nil {
+		ui.showMessage("Recovery setup failed. Check power and use wired setup again.")
+	} else if provisioningBuild {
+		ui.showMessage("Recovery ready. Install bootstrap HEX over SWD now.")
+	}
 
 	// Draw the current time.
 	for {
@@ -55,8 +77,11 @@ func run() error {
 		lineWidth := int16(textWidth) + 4 + int16(meridiemWidth)
 		textX := width/2 - lineWidth/2
 		baseline := height/2 + fontHeight/2
-		tinyfont.WriteLine(display, font, textX, baseline, msg, color.RGBA{255, 255, 255, 255})
-		tinyfont.WriteLine(display, &tinyfont.Picopixel, textX+int16(textWidth)+4, baseline, meridiem, color.RGBA{180, 180, 180, 255})
+		if ui.page == pageClock {
+			tinyfont.WriteLine(display, font, textX, baseline, msg, color.RGBA{255, 255, 255, 255})
+			tinyfont.WriteLine(display, &tinyfont.Picopixel, textX+int16(textWidth)+4, baseline, meridiem, color.RGBA{180, 180, 180, 255})
+		}
+		ui.draw(display, now)
 
 		power := formatPowerStatus(display.PowerStatus())
 		powerWidth, _ := tinyfont.LineWidth(&tinyfont.Picopixel, power)
@@ -67,12 +92,32 @@ func run() error {
 		}
 
 		// Sleep until the next minute.
-		keepRunning, err := display.Wait(nextMinuteDelay(now))
+		delay := nextMinuteDelay(now)
+		if ui.page == pageUpdate {
+			delay = min(delay, time.Until(ui.expires))
+		}
+		event, err := display.Wait(delay)
 		if err != nil {
 			return fmt.Errorf("wait for display: %w", err)
 		}
-		if !keepRunning {
+		if event.Kind == inputQuit {
 			return nil
+		}
+		switch ui.handle(event, time.Now(), firmwareState(), display.PowerStatus()) {
+		case actionKeep:
+			if err := keepFirmware(); err != nil {
+				ui.showMessage("Could not confirm. Reboot can still revert this build.")
+			} else {
+				ui.home(firmwareState())
+			}
+		case actionRevert:
+			if err := revertFirmware(); err != nil {
+				ui.showMessage(err.Error())
+			}
+		case actionStartUpdate:
+			if err := startFirmwareUpdate(progress("Starting updater")); err != nil {
+				ui.showMessage("Could not start updater. Check recovery with wired setup.")
+			}
 		}
 	}
 }

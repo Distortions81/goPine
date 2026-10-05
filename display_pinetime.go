@@ -20,6 +20,7 @@ type pineTimeDisplay struct {
 	batteryReady      bool
 	buttonPressed     bool
 	screenOn          bool
+	sleepAt           time.Time
 	touch             touchController
 }
 
@@ -28,7 +29,7 @@ const (
 	powerPresencePin    = machine.Pin(19)
 	batteryVoltagePin   = machine.Pin(31)
 	screenTimeout       = 15 * time.Second
-	buttonPollInterval  = 50 * time.Millisecond
+	buttonPollInterval  = 20 * time.Millisecond
 )
 
 func openDisplay() (clockDisplay, error) {
@@ -37,6 +38,13 @@ func openDisplay() (clockDisplay, error) {
 	// serial pins, so explicitly turn it off.
 	nrf.POWER.DCDCEN.Set(nrf.POWER_DCDCEN_DCDCEN)
 	nrf.UART0.ENABLE.Set(0)
+
+	// MCUboot leaves the low-brightness channel on. Take ownership of all
+	// three active-low channels, not just the one used by the LCD driver.
+	for _, pin := range [...]machine.Pin{machine.LCD_BACKLIGHT_LOW, machine.LCD_BACKLIGHT_MID, machine.LCD_BACKLIGHT_HIGH} {
+		pin.High()
+		pin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	}
 
 	// Keep the external SPI flash deselected while configuring the shared bus.
 	flashCS := machine.Pin(5)
@@ -73,8 +81,7 @@ func openDisplay() (clockDisplay, error) {
 		FrameRate:  st7789.FRAMERATE_39,
 		VSyncLines: 32,
 	})
-	// PineTime backlight control is active-low.
-	display.EnableBacklight(false)
+	setBacklight(true)
 
 	chargeIndicationPin.Configure(machine.PinConfig{Mode: machine.PinInput})
 	powerPresencePin.Configure(machine.PinConfig{Mode: machine.PinInput})
@@ -95,6 +102,7 @@ func openDisplay() (clockDisplay, error) {
 		DeviceOf:   &display,
 		batteryADC: batteryADC,
 		screenOn:   true,
+		sleepAt:    time.Now().Add(screenTimeout),
 	}
 	// Touch is optional at runtime so a controller fault cannot prevent the
 	// side button and clock display from working.
@@ -131,19 +139,22 @@ func (d *pineTimeDisplay) PowerStatus() powerStatus {
 	}
 }
 
-func (d *pineTimeDisplay) Wait(duration time.Duration) (bool, error) {
+func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 	refreshAt := time.Now().Add(duration)
-	sleepAt := time.Now().Add(screenTimeout)
 
 	for {
 		now := time.Now()
-		if d.touch.Poll() {
-			sleepAt = now.Add(screenTimeout)
+		if touch := d.touch.Poll(); touch.Activity {
+			d.sleepAt = now.Add(screenTimeout)
 			if !d.screenOn {
+				d.touch.tracker.cancel()
 				if err := d.setScreen(true); err != nil {
-					return false, err
+					return inputEvent{}, err
 				}
-				return true, nil
+				return inputEvent{Kind: inputWake}, nil
+			}
+			if touch.Tap {
+				return inputEvent{Kind: inputTap, X: touch.X, Y: touch.Y}, nil
 			}
 		}
 
@@ -151,25 +162,26 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (bool, error) {
 		if pressed && !d.buttonPressed {
 			if d.screenOn {
 				if err := d.setScreen(false); err != nil {
-					return false, err
+					return inputEvent{}, err
 				}
 			} else {
 				if err := d.setScreen(true); err != nil {
-					return false, err
+					return inputEvent{}, err
 				}
+				d.sleepAt = now.Add(screenTimeout)
 				d.buttonPressed = pressed
-				return true, nil
+				return inputEvent{Kind: inputWake}, nil
 			}
 		}
 		d.buttonPressed = pressed
 
-		if d.screenOn && !now.Before(sleepAt) {
+		if d.screenOn && !now.Before(d.sleepAt) {
 			if err := d.setScreen(false); err != nil {
-				return false, err
+				return inputEvent{}, err
 			}
 		}
 		if d.screenOn && !now.Before(refreshAt) {
-			return true, nil
+			return inputEvent{Kind: inputRefresh}, nil
 		}
 
 		time.Sleep(buttonPollInterval)
@@ -202,16 +214,22 @@ func (d *pineTimeDisplay) setScreen(on bool) error {
 		if err := d.DeviceOf.Sleep(false); err != nil {
 			return err
 		}
-		// The PineTime backlight is active-low.
-		d.DeviceOf.EnableBacklight(false)
+		setBacklight(true)
 	} else {
-		d.DeviceOf.EnableBacklight(true)
+		setBacklight(false)
 		if err := d.DeviceOf.Sleep(true); err != nil {
 			return err
 		}
 	}
 	d.screenOn = on
 	return nil
+}
+
+func setBacklight(on bool) {
+	// Keep the unused channels off even when entering from a bootloader.
+	machine.LCD_BACKLIGHT_LOW.High()
+	machine.LCD_BACKLIGHT_MID.High()
+	machine.LCD_BACKLIGHT_HIGH.Set(!on)
 }
 
 func (d *pineTimeDisplay) Close() error {

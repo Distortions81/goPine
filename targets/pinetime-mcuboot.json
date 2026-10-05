@@ -1,0 +1,6 @@
+{
+  "inherits": ["pinetime"],
+  "default-stack-size": 8192,
+  "build-tags": ["mcuboot"],
+  "linkerscript": "targets/pinetime-mcuboot.ld"
+}

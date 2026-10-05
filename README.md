@@ -31,18 +31,26 @@ sudo apt install libsdl2-dev
 
 ## PineTime firmware
 
-Build a flashable PineTime image with TinyGo's current `pinetime` target. The
+For **Bluetooth OTA with on-watch confirmation**, see [OTA setup](docs/ota.md).
+It uses stock InfiniTime MCUboot images and Nordic Legacy DFU ZIPs; there is no
+custom phone protocol or signing certificate. A one-time wired setup is needed
+when migrating from the standalone build below.
+
+Build a **standalone, wired-only** image with the project's PineTime target. The
 linker value seeds the watch's low-power RTC with the current local time:
 
 ```sh
-tinygo build -target=pinetime -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" -o goPine.hex .
+tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" -o goPine.hex .
 ```
 
 Flash it with the programmer configured for your PineTime development setup:
 
 ```sh
-tinygo flash -target=pinetime -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" .
+tinygo flash -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" .
 ```
+
+**Do not use this standalone target after installing MCUboot:** it starts at
+address zero and overwrites the bootloader. Use `scripts/build-ota.sh` instead.
 
 The PineTime's 32.768 kHz RTC keeps time while the CPU sleeps, but it is not a
 battery-backed calendar clock and resets when the watch reboots. Until BLE time
@@ -56,10 +64,15 @@ connected and charging has completed. The display and backlight turn off after
 button to wake the screen or turn it off immediately; a long press still allows
 a bootloader watchdog reset.
 
+Tap **UPDATE** to enter the Bluetooth recovery flow on an OTA-enabled build.
+An unconfirmed OTA build shows **KEEP / REVERT** instead. The simulator supports
+mouse clicks; run `GOPINE_SIM_TRIAL=1 go run .` to exercise the confirmation UI.
+
 ## Verification
 
 ```sh
 go test ./...
 go vet ./...
-tinygo build -target=pinetime -ldflags="-X main.firmwareTime=00:00:00" -o /tmp/goPine.hex .
+tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=00:00:00" -o /tmp/goPine.hex .
+bash scripts/build-ota.sh 0.2.0
 ```

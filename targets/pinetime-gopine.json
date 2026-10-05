@@ -1,0 +1,4 @@
+{
+  "inherits": ["pinetime"],
+  "default-stack-size": 8192
+}

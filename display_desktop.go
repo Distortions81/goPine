@@ -13,6 +13,7 @@ import (
 type desktopDisplay struct {
 	window  *sdl.Window
 	surface *sdl.Surface
+	touch   touchTracker
 }
 
 func openDisplay() (clockDisplay, error) {
@@ -72,15 +73,27 @@ func (d *desktopDisplay) PowerStatus() powerStatus {
 	return powerStatus{Percent: 100, State: chargeExternalPower}
 }
 
-func (d *desktopDisplay) Wait(duration time.Duration) (bool, error) {
+func (d *desktopDisplay) Wait(duration time.Duration) (inputEvent, error) {
 	deadline := time.Now().Add(duration)
 	for time.Now().Before(deadline) {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
-			switch event.(type) {
+			switch e := event.(type) {
 			case *sdl.QuitEvent:
-				return false, nil
+				return inputEvent{Kind: inputQuit}, nil
 			case *sdl.WindowEvent:
 				_ = d.window.UpdateSurface()
+			case *sdl.MouseButtonEvent:
+				if e.Button != sdl.BUTTON_LEFT || e.X < 0 || e.X >= 240 || e.Y < 0 || e.Y >= 240 {
+					continue
+				}
+				var data [6]byte
+				if e.Type == sdl.MOUSEBUTTONDOWN {
+					data[1] = 1
+				}
+				data[3], data[5] = byte(e.X), byte(e.Y)
+				if touch := d.touch.decode(data, time.Now()); touch.Tap {
+					return inputEvent{Kind: inputTap, X: touch.X, Y: touch.Y}, nil
+				}
 			}
 		}
 
@@ -92,7 +105,7 @@ func (d *desktopDisplay) Wait(duration time.Duration) (bool, error) {
 			time.Sleep(remaining)
 		}
 	}
-	return true, nil
+	return inputEvent{Kind: inputRefresh}, nil
 }
 
 func (d *desktopDisplay) Close() error {

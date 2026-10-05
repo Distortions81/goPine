@@ -49,7 +49,7 @@ requirement of the OTA file format.
 
 goPine itself does not advertise Bluetooth. After entering recovery, reconnect
 to the device advertised by InfiniTime. Companion-app time sync and notifications
-are not yet implemented in goPine. The pending 0.2.4 build adds a one-shot
+are not yet implemented in goPine. Version 0.2.4 adds a one-shot
 planned-reset clock handoff; unexpected resets still use build time. Both the
 departing and arriving goPine versions must support it, so the first upgrade
 from 0.2.3 cannot preserve time this way. See [time notes](time.md).
@@ -145,7 +145,7 @@ avoid the old DFU receiver's exact-200-byte final-buffer edge case.
 | Primary slot size / confirm flag | `0x74000` bytes / internal `0x7bfe8` |
 | Swap scratch | Internal `0x7c000..0x7cfff` |
 | Spare (untouched) | Internal `0x7d000..0x7dfff` |
-| goPine planned-reset clock journal (pending 0.2.4) | Internal `0x7e000..0x7ffff` |
+| goPine planned-reset clock journal (0.2.4) | Internal `0x7e000..0x7ffff` |
 | Factory recovery | External `0x00000..0x3ffff` |
 | Secondary image | External `0x40000..0xb3fff` |
 | Existing filesystem (untouched) | External `0xb4000..0x3fffff` |
@@ -288,12 +288,11 @@ dependency, bootloader change, or recovery change is introduced.
 
 Host tests cover coverage blending, geometry clipping and symmetry, glyph data,
 and pixel equivalence across strip boundaries. Standalone, provisioning, and
-MCUboot builds are checked; actual redraw speed, edge appearance, and touch
-responsiveness still require watch testing. Build a fresh time-seeded package
-with `bash scripts/build-ota.sh 0.2.4` before uploading. This revision has not
-been installed on the watch yet.
+MCUboot builds are checked. Build a fresh time-seeded package with
+`bash scripts/build-ota.sh 0.2.4` before uploading. Watch installation and user
+feedback are recorded below; redraw speed has not been quantitatively measured.
 
-### Touch-hold repair awaiting watch validation
+### Touch-hold repair and watch validation
 
 The installed build's hold indicator was reported to disappear immediately.
 Inspection found that a single failed I2C read or malformed coordinate canceled
@@ -327,6 +326,15 @@ antialiased glyph fifteen times. No controller register, bootloader, or recovery
 change is needed.
 
 Host regressions cover intermittent bad coordinates, read failures, missing
-IRQs, release/rearm, queue overflow, and text pixel equivalence. Hardware checks
-still required: a steady countdown, early release cancellation, movement
-cancellation, and successful entry to recovery after a deliberate full hold.
+IRQs, release/rearm, queue overflow, and text pixel equivalence.
+
+On 2026-10-05, after the user rebooted the watch into recovery, the host uploaded
+the 215,308-byte 0.2.4 image containing commit `027967f` through USB Bluetooth
+adapter hci1. Transfer took 2 minutes 25 seconds; the receiver accepted firmware
+validation and the activation/reset command was sent. Earlier connection
+timeouts had occurred before any firmware transfer. The user subsequently
+reported that everything appeared to work, following a request to check KEEP
+and a short hold/release. This is a successful on-watch smoke test, not a
+separately recorded result for every gesture. Deliberate full-hold recovery
+re-entry, movement cancellation, and planned-reset clock retention still need
+dedicated checks. The bootloader and recovery images were not changed.

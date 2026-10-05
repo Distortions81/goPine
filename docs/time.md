@@ -1,6 +1,6 @@
 # Time setting and PC/phone synchronization
 
-## Available in the pending 0.2.4 build
+## Available in version 0.2.4
 
 Swipe left from the clock, open Time & Date, then choose Set Time or Set Date.
 Large +/− controls edit a draft. Save applies it; Cancel, Back, swipe-right, or
@@ -74,7 +74,8 @@ low-power/error paths, and consuming the handoff exactly once. These are host
 tests, not proof of behavior across the actual bootloader/recovery. The local
 bootloader project, InfiniTime application, and TinyGo runtime sources inspected
 do not use these registers, but dependency/firmware changes require a fresh
-ownership audit. On-watch reset and full OTA tests are still pending. No
+ownership audit. Clock-retention checks across on-watch reset and a full OTA
+cycle are still pending, distinct from the successful 0.2.4 installation. No
 bootloader or recovery image has been modified.
 
 ### Hardware constraints

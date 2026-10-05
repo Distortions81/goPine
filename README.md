@@ -101,15 +101,17 @@ No full-screen framebuffer is needed. The 0.2.3 interface has been installed
 over Bluetooth and visually checked on the watch; hold timing and redraw
 responsiveness still need focused hardware checks.
 
-The next rendering revision (0.2.4) uses a true-black background, dark-charcoal
+Version 0.2.4 uses a true-black background, dark-charcoal
 cards, and native-size antialiased DejaVu Sans text. Four-bit glyph coverage is
 blended against the actual background; the tiny Picopixel metadata labels stay
 pixel-aligned. Font data is kept in immutable tables, with no runtime TTF parser
 or full-screen smoothing. See [font generation and licensing](internal/uifont/README.md).
 The small `internal/gfx` package provides crisp filled/outlined boxes plus
 antialiased lines, circles, discs, and filled rounded boxes, all clipped to the
-current strip. The strip buffer remains 5,760 bytes. This revision has been
-checked in the simulator and built for PineTime, but not yet tested on the watch.
+current strip. The strip buffer remains 5,760 bytes. This revision, including
+the touch-hold repair, was installed over Bluetooth on 2026-10-05; the user
+reported everything appeared to work. See [OTA validation notes](docs/ota.md)
+for the test scope and remaining dedicated hardware checks.
 
 ## Verification
 

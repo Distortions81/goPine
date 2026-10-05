@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -24,44 +25,137 @@ func TestTrailerFlags(t *testing.T) {
 	}
 }
 
-func TestUpdateRequiresTwoSeparateTaps(t *testing.T) {
+func openUpdate(t *testing.T, u *watchUI, now time.Time) {
+	t.Helper()
+	power := powerStatus{Percent: 80}
+	u.handle(inputEvent{Kind: inputSwipeLeft}, now, firmwareConfirmed, power)
+	if u.page != pageSettings {
+		t.Fatal("swipe did not open settings")
+	}
+	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 145}, now, firmwareConfirmed, power)
+	if u.page != pageUpdate {
+		t.Fatal("settings did not open update prompt")
+	}
+}
+
+func TestUpdateRequiresFreshThreeSecondHold(t *testing.T) {
 	now := time.Unix(0, 0)
 	power := powerStatus{Percent: 80}
 	u := newWatchUI(firmwareConfirmed)
-	if a := u.handle(inputEvent{Kind: inputWake, X: 180, Y: 195}, now, firmwareConfirmed, power); a != actionNone || u.page != pageClock {
-		t.Fatal("wake opened updater")
+	// Old clock-button position and wake no longer open the updater.
+	for _, kind := range []inputKind{inputWake, inputTap} {
+		u.handle(inputEvent{Kind: kind, X: 180, Y: 195}, now, firmwareConfirmed, power)
+		if u.page != pageClock {
+			t.Fatal("clock tap opened updater")
+		}
 	}
-	tap := inputEvent{Kind: inputTap, X: 180, Y: 195}
-	if a := u.handle(tap, now, firmwareConfirmed, power); a != actionNone || u.page != pageUpdate {
-		t.Fatal("opening prompt performed an update")
+	openUpdate(t, &u, now)
+	hold := inputEvent{Kind: inputHold, X: 120, Y: 195, Held: 3 * time.Second}
+	if a := u.handle(hold, now.Add(3*time.Second), firmwareConfirmed, power); a != actionNone {
+		t.Fatal("unpaired hold started update")
 	}
-	if a := u.handle(tap, now.Add(time.Second), firmwareConfirmed, power); a != actionStartUpdate {
-		t.Fatal("explicit confirmation did not start update")
+	u.handle(inputEvent{Kind: inputPress, X: 120, Y: 195}, now, firmwareConfirmed, power)
+	hold.Held = 2999 * time.Millisecond
+	if a := u.handle(hold, now.Add(hold.Held), firmwareConfirmed, power); a != actionNone {
+		t.Fatal("short hold started update")
+	}
+	hold.Held = 3 * time.Second
+	if a := u.handle(hold, now.Add(hold.Held), firmwareConfirmed, power); a != actionStartUpdate {
+		t.Fatal("complete hold did not start update")
+	}
+	if a := u.handle(hold, now.Add(4*time.Second), firmwareConfirmed, power); a != actionNone {
+		t.Fatal("held finger started another update")
+	}
+}
+
+func TestHoldCancellation(t *testing.T) {
+	now := time.Unix(0, 0)
+	power := powerStatus{Percent: 80}
+	for _, kind := range []inputKind{inputRelease, inputTap, inputCancel, inputWake, inputSleep, inputSwipeRight} {
+		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+			u := newWatchUI(firmwareConfirmed)
+			openUpdate(t, &u, now)
+			u.handle(inputEvent{Kind: inputPress, X: 120, Y: 195}, now, firmwareConfirmed, power)
+			u.handle(inputEvent{Kind: kind}, now.Add(time.Second), firmwareConfirmed, power)
+			if u.holding {
+				t.Fatal("hold not canceled")
+			}
+			if a := u.handle(inputEvent{Kind: inputHold, X: 120, Y: 195, Held: 4 * time.Second}, now.Add(4*time.Second), firmwareConfirmed, power); a != actionNone {
+				t.Fatal("stale hold accepted")
+			}
+		})
+	}
+	for _, invalid := range []inputEvent{
+		{Kind: inputPress, X: 120, Y: 170},
+		{Kind: inputHold, X: 220, Y: 195, Held: time.Second},
+	} {
+		u := newWatchUI(firmwareConfirmed)
+		openUpdate(t, &u, now)
+		u.handle(inputEvent{Kind: inputPress, X: 120, Y: 195}, now, firmwareConfirmed, power)
+		u.handle(invalid, now, firmwareConfirmed, power)
+		if u.holding {
+			t.Fatal("outside contact retained hold")
+		}
 	}
 }
 
 func TestUpdateCancelExpiryAndPower(t *testing.T) {
 	now := time.Unix(0, 0)
-	tap := inputEvent{Kind: inputTap, X: 180, Y: 195}
 	power := powerStatus{Percent: 80}
-	u := newWatchUI(firmwareConfirmed)
-	u.handle(tap, now, firmwareConfirmed, power)
-	if a := u.handle(inputEvent{Kind: inputTap, X: 60, Y: 195}, now, firmwareConfirmed, power); a != actionNone || u.page != pageClock {
-		t.Fatal("cancel did not return to clock")
+	for _, cancel := range []inputEvent{{Kind: inputSwipeRight}, {Kind: inputTap, X: 20, Y: 20}} {
+		u := newWatchUI(firmwareConfirmed)
+		openUpdate(t, &u, now)
+		u.handle(cancel, now, firmwareConfirmed, power)
+		if u.page != pageSettings {
+			t.Fatal("back did not return to settings")
+		}
 	}
-	u.handle(tap, now, firmwareConfirmed, power)
-	if a := u.handle(tap, now.Add(30*time.Second), firmwareConfirmed, power); a != actionNone || u.page != pageClock {
+	u := newWatchUI(firmwareConfirmed)
+	openUpdate(t, &u, now)
+	u.handle(inputEvent{Kind: inputPress, X: 120, Y: 195}, now.Add(28*time.Second), firmwareConfirmed, power)
+	if a := u.handle(inputEvent{Kind: inputHold, X: 120, Y: 195, Held: 3 * time.Second}, now.Add(31*time.Second), firmwareConfirmed, power); a != actionNone || u.page != pageSettings {
 		t.Fatal("expired prompt accepted")
 	}
-	u.handle(tap, now, firmwareConfirmed, power)
-	if a := u.handle(tap, now.Add(time.Second), firmwareConfirmed, powerStatus{Percent: 19}); a != actionNone || u.page != pageMessage {
-		t.Fatal("battery not rechecked before update")
+	for _, state := range []updateState{firmwareConfirmed, firmwareTrial, firmwareInvalid, firmwareUnavailable} {
+		u = newWatchUI(firmwareConfirmed)
+		openUpdate(t, &u, now)
+		u.handle(inputEvent{Kind: inputPress, X: 120, Y: 195}, now, firmwareConfirmed, power)
+		if a := u.handle(inputEvent{Kind: inputHold, X: 120, Y: 195, Held: 3 * time.Second}, now.Add(3*time.Second), state, powerStatus{Percent: 19}); a != actionNone || u.holding {
+			t.Fatal("unsafe power/state accepted")
+		}
 	}
 	for _, state := range []updateState{firmwareUnavailable, firmwareInvalid, firmwareTrial} {
-		u = newWatchUI(state)
-		if a := u.handle(tap, now, state, power); a == actionStartUpdate || u.page == pageUpdate {
-			t.Fatalf("opened update with state %d", state)
+		armed := newWatchUI(firmwareConfirmed)
+		openUpdate(t, &armed, now)
+		armed.handle(inputEvent{Kind: inputPress, X: 120, Y: 195}, now, firmwareConfirmed, power)
+		if a := armed.handle(inputEvent{Kind: inputHold, X: 120, Y: 195, Held: 3 * time.Second}, now.Add(3*time.Second), state, power); a != actionNone || armed.holding {
+			t.Fatal("changed firmware state accepted with adequate battery")
 		}
+		u = newWatchUI(state)
+		u.handle(inputEvent{Kind: inputSwipeLeft}, now, state, power)
+		u.handle(inputEvent{Kind: inputTap, X: 120, Y: 145}, now, state, power)
+		if u.page == pageUpdate {
+			t.Fatal("unsafe state opened update")
+		}
+	}
+}
+
+func TestSettingsTimeFormatAndKeepLanding(t *testing.T) {
+	now := time.Date(2026, 10, 4, 23, 5, 0, 0, time.UTC)
+	u := newWatchUI(firmwareConfirmed)
+	if u.use24 || u.timeLabel(now) != "11:05" {
+		t.Fatal("default is not 12-hour")
+	}
+	u.handle(inputEvent{Kind: inputSwipeLeft}, now, firmwareConfirmed, powerStatus{})
+	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 80}, now, firmwareConfirmed, powerStatus{})
+	u.handle(inputEvent{Kind: inputSwipeRight}, now, firmwareConfirmed, powerStatus{})
+	if u.page != pageClock || !u.use24 || u.timeLabel(now) != "23:05" {
+		t.Fatal("format choice lost on back")
+	}
+	u.home(firmwareConfirmed)
+	u.handle(inputEvent{Kind: inputTap, X: 180, Y: 195}, now, firmwareConfirmed, powerStatus{Percent: 80})
+	if u.page != pageClock {
+		t.Fatal("extra KEEP-position tap opened update")
 	}
 }
 

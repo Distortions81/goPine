@@ -51,7 +51,7 @@ func (t *touchController) Configure() error {
 }
 
 func (t *touchController) Poll() touchEvent {
-	if !t.ready || t.pending.Get() == 0 {
+	if !t.ready || (t.pending.Get() == 0 && !t.tracker.down) {
 		return touchEvent{}
 	}
 	state := interrupt.Disable()
@@ -64,7 +64,7 @@ func (t *touchController) Poll() touchEvent {
 	var event [6]byte
 	if err := machine.I2C1.Tx(touchAddress, []byte{0x01}, event[:]); err != nil {
 		t.tracker.cancel()
-		return touchEvent{Activity: true}
+		return touchEvent{Activity: true, inputEvent: inputEvent{Kind: inputCancel}}
 	}
 	return t.tracker.decode(event, time.Now())
 }

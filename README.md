@@ -57,16 +57,34 @@ battery-backed calendar clock and resets when the watch reboots. Until BLE time
 synchronization is implemented, a rebuild/reflash supplies the initial time and
 the displayed value may be behind by the time spent flashing.
 
-The watch face uses 12-hour time by default, shows the estimated battery
-percentage, and indicates `CHG` while charging or `PWR` when external power is
-connected and charging has completed. The display and backlight turn off after
+The watch face uses large, high-contrast time with 12-hour time by default.
+A battery gauge and readable percentage show estimated remaining charge;
+the gauge contains a lightning bolt only while charging. Low battery is amber,
+and the status text distinguishes Charging, Plugged in, and On battery (external
+power alone does not prove the battery is full). The estimate still comes from
+battery voltage, not a calibrated fuel gauge. The display and backlight turn off after
 15 seconds. Tap the screen to wake it or extend that timeout. Press the side
 button to wake the screen or turn it off immediately; a long press still allows
 a bootloader watchdog reset.
 
-Tap **UPDATE** to enter the Bluetooth recovery flow on an OTA-enabled build.
+Swipe **left** on the clock to open Settings; swipe **right** or use Back to
+return. Settings includes a 12/24-hour toggle (12-hour is the default; the choice
+lasts until restart) and **Firmware Update**. To enter Bluetooth recovery,
+press and hold **HOLD 3 SECONDS** until the countdown finishes. Releasing early,
+dragging away, a touch error, or sleep cancels the hold. Back/swipe-right cancels
+the prompt before recovery starts; this does not add a Back button to recovery.
+The prompt expires after 30 seconds and requires at least 20% battery or power.
+
 An unconfirmed OTA build shows **KEEP / REVERT** instead. The simulator supports
-mouse clicks; run `GOPINE_SIM_TRIAL=1 go run .` to exercise the confirmation UI.
+mouse clicks, horizontal drags, and press-and-hold; run `GOPINE_SIM_TRIAL=1 go run .`
+to exercise the confirmation UI. KEEP returns to a clock with no update button.
+
+Rendering uses one reusable 240×16 RGB444 strip (5,760 bytes), batching text and
+buttons into at most 15 bitmap transfers for a full frame. Unchanged strips
+are skipped; hold feedback updates at 10Hz without clearing the whole screen.
+No full-screen framebuffer is needed. The 0.2.3 interface has been installed
+over Bluetooth and visually checked on the watch; hold timing and redraw
+responsiveness still need focused hardware checks.
 
 ## Verification
 

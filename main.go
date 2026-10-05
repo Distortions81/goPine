@@ -3,11 +3,9 @@ package main
 
 import (
 	"fmt"
-	"image/color"
 	"time"
 
-	"tinygo.org/x/tinyfont"
-	"tinygo.org/x/tinyfont/freemono"
+	"tinygo.org/x/tinyfont/freesans"
 )
 
 func main() {
@@ -20,27 +18,14 @@ func run() error {
 	if err := initializeClock(); err != nil {
 		return fmt.Errorf("initialize clock: %w", err)
 	}
-
 	display, err := openDisplay()
 	if err != nil {
 		return fmt.Errorf("open display: %w", err)
 	}
 	defer display.Close()
 
-	width, height := display.Size()
-
-	// Pick an appropriate font.
-	var font tinyfont.Fonter = &tinyfont.Picopixel // fallback font
-	fonts := []tinyfont.Fonter{&freemono.Bold9pt7b, &freemono.Bold12pt7b, &freemono.Bold18pt7b, &freemono.Bold24pt7b}
-	for _, f := range fonts {
-		// If the font fits on this screen, use it.
-		lineWidth, _ := tinyfont.LineWidth(f, "00:00")
-		if int16(lineWidth) <= width {
-			font = f
-		}
-	}
-	fontHeight := int16(font.GetGlyph('0').Info().Height)
 	ui := newWatchUI(firmwareState())
+	var renderer frameRenderer
 	progress := func(title string) func(int) {
 		last := -1
 		return func(percent int) {
@@ -48,11 +33,11 @@ func run() error {
 				return
 			}
 			last = percent / 5
-			display.FillScreen(black)
-			centered(display, &freemono.Bold9pt7b, 65, title, white)
-			centered(display, &freemono.Bold24pt7b, 130, fmt.Sprintf("%d%%", percent), white)
-			centered(display, &freemono.Bold9pt7b, 175, "Keep power connected", muted)
-			_ = display.Display()
+			_ = renderer.render(display, func(c canvas) {
+				centered(c, &freesans.Bold9pt7b, 65, title, white)
+				centered(c, &freesans.Bold24pt7b, 130, fmt.Sprintf("%d%%", percent), accent)
+				centered(c, &freesans.Bold9pt7b, 175, "Keep power connected", muted)
+			})
 		}
 	}
 	if provisioningBuild && !updatePowerOK(display.PowerStatus()) {
@@ -63,47 +48,45 @@ func run() error {
 		ui.showMessage("Recovery ready. Install bootstrap HEX over SWD now.")
 	}
 
-	// Draw the current time.
+	var previous frameKey
+	painted, awake := false, true
+	power := display.PowerStatus()
+	nextPower := time.Now().Add(time.Second)
 	for {
-		// Clear the screen.
-		display.FillScreen(color.RGBA{0, 0, 0, 255})
-
-		// Draw the current time.
 		now := time.Now()
-		msg := formatTime(now)
-		textWidth, _ := tinyfont.LineWidth(font, msg)
-		meridiem := formatMeridiem(now)
-		meridiemWidth, _ := tinyfont.LineWidth(&tinyfont.Picopixel, meridiem)
-		lineWidth := int16(textWidth) + 4 + int16(meridiemWidth)
-		textX := width/2 - lineWidth/2
-		baseline := height/2 + fontHeight/2
-		if ui.page == pageClock {
-			tinyfont.WriteLine(display, font, textX, baseline, msg, color.RGBA{255, 255, 255, 255})
-			tinyfont.WriteLine(display, &tinyfont.Picopixel, textX+int16(textWidth)+4, baseline, meridiem, color.RGBA{180, 180, 180, 255})
+		if !now.Before(nextPower) {
+			power = display.PowerStatus()
+			nextPower = now.Add(time.Second)
 		}
-		ui.draw(display, now)
-
-		power := formatPowerStatus(display.PowerStatus())
-		powerWidth, _ := tinyfont.LineWidth(&tinyfont.Picopixel, power)
-		tinyfont.WriteLine(display, &tinyfont.Picopixel, width/2-int16(powerWidth/2), height-10, power, color.RGBA{160, 200, 160, 255})
-
-		if err := display.Display(); err != nil {
-			return fmt.Errorf("refresh display: %w", err)
+		key := ui.frameKey(now, power)
+		if awake && (!painted || key != previous) {
+			if err := renderer.render(display, func(c canvas) {
+				ui.drawFrame(c, now, power)
+			}); err != nil {
+				return fmt.Errorf("refresh display: %w", err)
+			}
+			previous, painted = key, true
 		}
 
-		// Sleep until the next minute.
-		delay := nextMinuteDelay(now)
+		delay := min(nextMinuteDelay(now), time.Until(nextPower))
 		if ui.page == pageUpdate {
 			delay = min(delay, time.Until(ui.expires))
 		}
-		event, err := display.Wait(delay)
+		event, err := display.Wait(max(delay, time.Millisecond))
 		if err != nil {
 			return fmt.Errorf("wait for display: %w", err)
 		}
 		if event.Kind == inputQuit {
 			return nil
 		}
-		switch ui.handle(event, time.Now(), firmwareState(), display.PowerStatus()) {
+		if event.Kind == inputSleep {
+			awake = false
+		}
+		if event.Kind == inputWake {
+			awake, painted = true, false
+			renderer.invalidate()
+		}
+		switch ui.handle(event, time.Now(), firmwareState(), power) {
 		case actionKeep:
 			if err := keepFirmware(); err != nil {
 				ui.showMessage("Could not confirm. Reboot can still revert this build.")
@@ -115,11 +98,32 @@ func run() error {
 				ui.showMessage(err.Error())
 			}
 		case actionStartUpdate:
-			if err := startFirmwareUpdate(progress("Starting updater")); err != nil {
+			// Recheck actual power at the flash boundary, not just cached UI data.
+			if !updatePowerOK(display.PowerStatus()) {
+				ui.showMessage("Charge to at least 20 percent first.")
+			} else if err := startFirmwareUpdate(progress("Starting updater")); err != nil {
 				ui.showMessage("Could not start updater. Check recovery with wired setup.")
 			}
+			painted = false
 		}
 	}
+}
+
+// Exclude input timestamps: 50Hz touch polling should repaint only when visible
+// state changes (the hold indicator advances at 10Hz).
+type frameKey struct {
+	page                  page
+	message, clock, power string
+	use24, holding        bool
+	step                  int
+}
+
+func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
+	clock := ""
+	if u.page == pageClock {
+		clock = now.Format("15:04")
+	}
+	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep}
 }
 
 func formatTime(t time.Time) string {

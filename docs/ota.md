@@ -10,14 +10,18 @@ need hardware verification.
 
 ## Normal update
 
-1. Build `bash scripts/build-ota.sh 0.2.1` (or your chosen version).
-2. On a confirmed goPine build, tap **UPDATE**, then **START** within 30 seconds.
+1. Build `bash scripts/build-ota.sh 0.2.3` (or your chosen version).
+2. On a confirmed goPine build, swipe left to **Settings**, tap **Firmware
+   Update**, then hold **HOLD 3 SECONDS** continuously until the countdown finishes.
+   The prompt expires after 30 seconds. Releasing early or dragging away cancels
+   the hold; swipe right or tap the back arrow to return to Settings. Sleep, an
+   invalid touch sample, or a gap in contact samples also cancels the hold.
    The watch needs at least 20% estimated battery or external power. Keeping it
    on its charger is recommended throughout the update.
 3. goPine verifies the factory recovery image, stages it, and reboots through
    MCUboot into recovery. Wait for the InfiniTime recovery screen.
 4. Connect a compatible PineTime updater and send
-   `build/ota/gopine-dfu-0.2.1.zip`. Use its **firmware/Legacy DFU** workflow, not
+   `build/ota/gopine-dfu-0.2.3.zip`. Use its **firmware/Legacy DFU** workflow, not
    resource upload or Nordic Secure DFU. See upstream instructions for
    [Gadgetbridge](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/doc/gettingStarted/ota-gadgetbridge.md)
    or [nRF Connect](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/doc/gettingStarted/ota-nrfconnect.md).
@@ -25,8 +29,9 @@ need hardware verification.
 5. After the new goPine boots, test the screen and touch, then tap **KEEP** to
    confirm. **REVERT** reboots without confirming. A reset before KEEP also
    causes MCUboot to revert; leaving the prompt open never auto-confirms it.
-   After KEEP, installation is finished: stay on the clock screen. **UPDATE**
-   starts a new update cycle; it is not an additional confirmation step.
+   After KEEP, installation is finished: stay on the clock screen. The clock
+   no longer has an UPDATE button. Settings → Firmware Update starts a new
+   update cycle; it is not an additional confirmation step.
 
 **Fallback is recovery, not the previous goPine version**, when updating via
 this recovery-based flow. Recovery can receive another goPine ZIP or an official
@@ -35,7 +40,7 @@ once its rollback slot has been reused. A direct InfiniTime-to-goPine update
 instead falls back to that preceding InfiniTime image until KEEP.
 
 The stock recovery screen has no on-screen Cancel/Back button. In the current
-UI, START therefore leaves the normal watch application until another image is
+UI, completing the hold therefore leaves the normal watch application until another image is
 installed. The bootloader has a separate manual rollback gesture, but it is not
 a tested cancellation path in this workflow and cannot restore an image whose
 slot has already been overwritten. This is a prototype UX limitation, not a
@@ -177,7 +182,7 @@ There is no prototype certificate to distribute in this mode. A certificate or
 public key is normally public; a private signing key must remain private for
 signatures to establish trust.
 
-Entering the receiver requires a local START tap in goPine, but after recovery
+Entering the receiver requires a local three-second hold in goPine, but after recovery
 is running a nearby compatible BLE client may send firmware. KEEP authorizes
 keeping code that is **already executing**: it is a usability/rollback control,
 not a security boundary or permission to execute untrusted code. The stock
@@ -217,3 +222,30 @@ reproduced and diagnosed.
 - [ ] Test a deliberately canceled BLE transfer and reconnect without wired repair.
 - [ ] Only with SWD recovery available, test power interruption while staging and
   swapping. Do not rely on host tests as proof of flash atomicity.
+
+## Settings and rendering revision (0.2.3)
+
+The clock's UPDATE button was removed to prevent extra KEEP-position taps from
+opening a new update prompt. Swipe-left opens Settings; swipe-right goes back.
+A separate update screen requires a fresh, stationary three-second touch with
+a countdown and progress bar. No elapsed-time timer alone can start recovery.
+The side-button/watchdog path is serviced during continuous touch, and wake
+gestures cannot operate controls. The 12/24-hour setting is in-memory only.
+The clock uses enlarged sans-serif digits, a battery gauge with a charging-only
+lightning bolt, a readable percentage, and distinct low-battery/external-power
+labels. Battery estimation and the underlying voltage curve are unchanged.
+
+Text and controls are rasterized into a reusable 5,760-byte strip buffer, with
+changed-strip detection instead of per-pixel LCD transactions. Host tests check
+pixel equivalence, skipped transfers, retry after transfer errors, navigation,
+hold cancellation, power/state guards, and SDL input/rendering. These tests do
+not establish physical touch sensitivity, timing, or watch frame rate.
+
+On 2026-10-04, the host uploaded the 171,828-byte 0.2.3 image over Bluetooth;
+the receiver accepted validation and the activation/reset command was sent.
+The user reported that the new interface looked great on the watch. Detailed
+interaction checks remain pending: a full three-second hold, early release,
+dragging away, sleep/wake, repeated KEEP taps, and persistence after KEEP and
+reboot. The bootloader and recovery images are unchanged; a reliable blue-menu
+exit from recovery still needs a controlled test before any upload/red recovery
+overwrites the rollback copy. This UI revision does not resolve that question.

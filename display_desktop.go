@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/veandco/go-sdl2/sdl"
+	"tinygo.org/x/drivers/pixel"
 )
 
 type desktopDisplay struct {
-	window  *sdl.Window
-	surface *sdl.Surface
-	touch   touchTracker
+	window             *sdl.Window
+	surface            *sdl.Surface
+	touch              touchTracker
+	pointerDown        bool
+	pointerX, pointerY int16
 }
 
 func openDisplay() (clockDisplay, error) {
@@ -65,6 +68,30 @@ func (d *desktopDisplay) FillScreen(c color.RGBA) {
 	_ = d.surface.FillRect(nil, pixel)
 }
 
+func (d *desktopDisplay) FillRectangle(x, y, width, height int16, c color.RGBA) error {
+	return d.surface.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(width), H: int32(height)}, sdl.MapRGBA(d.surface.Format, c.R, c.G, c.B, c.A))
+}
+
+func (d *desktopDisplay) DrawBitmap(x, y int16, bitmap pixel.Image[pixel.RGB444BE]) error {
+	w, h := bitmap.Size()
+	for yy := 0; yy < h; yy++ {
+		for xx := 0; xx < w; xx++ {
+			d.SetPixel(x+int16(xx), y+int16(yy), bitmap.Get(xx, yy).RGBA())
+		}
+	}
+	return nil
+}
+
+func (d *desktopDisplay) pointerEvent() inputEvent {
+	var data [6]byte
+	if d.pointerDown {
+		data[1] = 1
+	}
+	data[2], data[3] = byte(d.pointerX>>8), byte(d.pointerX)
+	data[4], data[5] = byte(d.pointerY>>8), byte(d.pointerY)
+	return d.touch.decode(data, time.Now()).inputEvent
+}
+
 func (d *desktopDisplay) Display() error {
 	return d.window.UpdateSurface()
 }
@@ -82,19 +109,28 @@ func (d *desktopDisplay) Wait(duration time.Duration) (inputEvent, error) {
 				return inputEvent{Kind: inputQuit}, nil
 			case *sdl.WindowEvent:
 				_ = d.window.UpdateSurface()
+				if e.Event == sdl.WINDOWEVENT_FOCUS_LOST {
+					d.pointerDown = false
+					d.touch.cancel()
+					return inputEvent{Kind: inputCancel}, nil
+				}
 			case *sdl.MouseButtonEvent:
-				if e.Button != sdl.BUTTON_LEFT || e.X < 0 || e.X >= 240 || e.Y < 0 || e.Y >= 240 {
+				if e.Button != sdl.BUTTON_LEFT {
 					continue
 				}
-				var data [6]byte
-				if e.Type == sdl.MOUSEBUTTONDOWN {
-					data[1] = 1
-				}
-				data[3], data[5] = byte(e.X), byte(e.Y)
-				if touch := d.touch.decode(data, time.Now()); touch.Tap {
-					return inputEvent{Kind: inputTap, X: touch.X, Y: touch.Y}, nil
+				d.pointerDown = e.Type == sdl.MOUSEBUTTONDOWN
+				d.pointerX, d.pointerY = int16(e.X), int16(e.Y)
+				return d.pointerEvent(), nil
+			case *sdl.MouseMotionEvent:
+				if d.pointerDown {
+					d.pointerX, d.pointerY = int16(e.X), int16(e.Y)
+					return d.pointerEvent(), nil
 				}
 			}
+		}
+		if d.pointerDown {
+			time.Sleep(20 * time.Millisecond)
+			return d.pointerEvent(), nil
 		}
 
 		remaining := time.Until(deadline)

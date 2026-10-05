@@ -144,26 +144,16 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 
 	for {
 		now := time.Now()
-		if touch := d.touch.Poll(); touch.Activity {
-			d.sleepAt = now.Add(screenTimeout)
-			if !d.screenOn {
-				d.touch.tracker.cancel()
-				if err := d.setScreen(true); err != nil {
-					return inputEvent{}, err
-				}
-				return inputEvent{Kind: inputWake}, nil
-			}
-			if touch.Tap {
-				return inputEvent{Kind: inputTap, X: touch.X, Y: touch.Y}, nil
-			}
-		}
-
+		// Service the side button/watchdog even during continuous touch events.
 		pressed := d.readButton()
 		if pressed && !d.buttonPressed {
+			d.buttonPressed = true
+			d.touch.tracker.cancel()
 			if d.screenOn {
 				if err := d.setScreen(false); err != nil {
 					return inputEvent{}, err
 				}
+				return inputEvent{Kind: inputSleep}, nil
 			} else {
 				if err := d.setScreen(true); err != nil {
 					return inputEvent{}, err
@@ -174,11 +164,26 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 			}
 		}
 		d.buttonPressed = pressed
+		if touch := d.touch.Poll(); touch.Activity {
+			d.sleepAt = now.Add(screenTimeout)
+			if !d.screenOn {
+				d.touch.tracker.cancel()
+				if err := d.setScreen(true); err != nil {
+					return inputEvent{}, err
+				}
+				return inputEvent{Kind: inputWake}, nil
+			}
+			// Bound event rate even when the caller skips an unchanged frame.
+			time.Sleep(buttonPollInterval)
+			return touch.inputEvent, nil
+		}
 
 		if d.screenOn && !now.Before(d.sleepAt) {
 			if err := d.setScreen(false); err != nil {
 				return inputEvent{}, err
 			}
+			d.touch.tracker.cancel()
+			return inputEvent{Kind: inputSleep}, nil
 		}
 		if d.screenOn && !now.Before(refreshAt) {
 			return inputEvent{Kind: inputRefresh}, nil

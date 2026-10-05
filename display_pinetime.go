@@ -206,8 +206,17 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 // Called between raster strips as well as from Wait. Never dispatch UI actions
 // recursively from a draw; queue observations for the normal input loop.
 func (d *pineTimeDisplay) serviceInput() {
+	serviceTimeRadio()
 	if !d.touchEvents.push(d.touch.Poll()) {
 		d.touch.tracker.cancel()
+	}
+}
+
+// Keep the short sync/confirmation window visible while the phone connects.
+// The physical button still sleeps immediately and cancels the sync window.
+func (d *pineTimeDisplay) keepAwake() {
+	if d.screenOn {
+		d.sleepAt = time.Now().Add(screenTimeout)
 	}
 }
 

@@ -1,0 +1,29 @@
+#define NRF52832_XXAA 1
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define malloc gopine_ble_malloc
+#define calloc gopine_ble_calloc
+#define realloc gopine_ble_realloc
+#define free gopine_ble_free
+#define NIMBLE_CFG_CONTROLLER 1
+#define NIMBLE_CFG_HOST 1
+#define MYNEWT_VAL_BLE_ROLE_CENTRAL 0
+#define MYNEWT_VAL_BLE_ROLE_OBSERVER 0
+#define MYNEWT_VAL_BLE_MAX_CONNECTIONS 1
+#define MYNEWT_VAL_BLE_HS_AUTO_START 0
+// Own the HFXO request across each explicit Sync Time session.
+#define MYNEWT_VAL_BLE_LL_RFMGMT_ENABLE_TIME 0
+#define MYNEWT_VAL_BLE_HS_STOP_ON_SHUTDOWN_TIMEOUT 500
+#define MYNEWT_VAL_BLE_SM_LEGACY 0
+#define MYNEWT_VAL_BLE_SM_SC 0
+#define MYNEWT_VAL_BLE_SM_BONDING 0
+#define MYNEWT_VAL_BLE_LL_CFG_FEAT_LE_ENCRYPTION 0
+#define MYNEWT_VAL_BLE_LL_CFG_FEAT_LL_PRIVACY 0
+#define MYNEWT_VAL_BLE_LL_CFG_FEAT_DATA_LEN_EXT 0
+#define MYNEWT_VAL_BLE_LL_CFG_FEAT_LE_2M_PHY 0
+#define MYNEWT_VAL_BLE_LL_CFG_FEAT_LE_CODED_PHY 0
+#define MYNEWT_VAL_BLE_ATT_PREFERRED_MTU 23
+#define MYNEWT_VAL_BLE_L2CAP_COC_MAX_NUM 0
+#define MYNEWT_VAL_MSYS_1_BLOCK_COUNT 8
+#define MYNEWT_VAL_MSYS_1_BLOCK_SIZE 128
+#define MYNEWT_VAL_BLE_ACL_BUF_SIZE 64
+#define MYNEWT_VAL_BLE_ACL_BUF_COUNT 4

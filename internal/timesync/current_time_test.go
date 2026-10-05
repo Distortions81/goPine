@@ -80,6 +80,25 @@ func TestConfirmationAndExpiry(t *testing.T) {
 	}
 }
 
+func TestFiveMinuteSyncWindow(t *testing.T) {
+	now := time.Unix(100, 0)
+	var s Session
+	s.Start(now)
+	if !s.Expires.Equal(now.Add(5 * time.Minute)) {
+		t.Fatal("sync window must allow five minutes", s.Expires)
+	}
+	if s.Expire(now.Add(time.Minute)) || s.Expire(now.Add(5*time.Minute-time.Nanosecond)) {
+		t.Fatal("sync window closed too soon")
+	}
+	value, _ := Encode(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC))
+	if err := s.Offer(now.Add(4*time.Minute), value[:]); err != nil {
+		t.Fatal("late proposal rejected", err)
+	}
+	if !s.Expire(now.Add(5*time.Minute)) || s.Open || s.Pending {
+		t.Fatal("sync window did not expire at five minutes")
+	}
+}
+
 func FuzzDecode(f *testing.F) {
 	f.Add([]byte{0xea, 7, 10, 5, 12, 34, 56, 1, 0, 1})
 	f.Fuzz(func(t *testing.T, value []byte) {

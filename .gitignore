@@ -2,3 +2,4 @@
 /goPine.hex
 /build/
 /internal/recoveryasset/recovery.bin
+__pycache__/

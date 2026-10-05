@@ -11,7 +11,7 @@ const (
 	ServiceUUID     = 0x1805
 	CurrentTimeUUID = 0x2a2b
 	ValueSize       = 10
-	Window          = 60 * time.Second
+	Window          = 5 * time.Minute
 )
 
 // Decode accepts a complete local calendar time, not a UTC timestamp. A UTC

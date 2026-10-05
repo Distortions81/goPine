@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Distortions81/goPine/internal/gfx"
+	"github.com/Distortions81/goPine/internal/timesync"
 	"github.com/Distortions81/goPine/internal/uifont"
 	"tinygo.org/x/tinyfont"
 )
@@ -22,6 +23,7 @@ const (
 	pageTimeSettings
 	pageSetTime
 	pageSetDate
+	pageTimeSync
 )
 
 type uiAction uint8
@@ -36,15 +38,17 @@ const (
 const updateHoldDuration = 3 * time.Second
 
 type watchUI struct {
-	page      page
-	expires   time.Time
-	message   string
-	use24     bool // Saved only with a planned-reboot clock handoff.
-	holding   bool
-	holdSince time.Time
-	holdStep  int
-	clock     watchClock
-	edit      clockEdit
+	page       page
+	expires    time.Time
+	message    string
+	use24      bool // Saved only with a planned-reboot clock handoff.
+	holding    bool
+	holdSince  time.Time
+	holdStep   int
+	clock      watchClock
+	edit       clockEdit
+	sync       timesync.Session
+	syncStatus string
 }
 
 func newWatchUI(state updateState) watchUI {
@@ -83,6 +87,10 @@ func (u *watchUI) back(state updateState) {
 }
 
 func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power powerStatus) uiAction {
+	if u.page == pageTimeSync {
+		u.handleTimeSync(e, now)
+		return actionNone
+	}
 	if e.Kind == inputWake || e.Kind == inputSleep || e.Kind == inputCancel {
 		u.cancelHold()
 		if e.Kind == inputSleep && (u.page == pageSetTime || u.page == pageSetDate) {
@@ -236,6 +244,10 @@ func (u *watchUI) timeLabel(now time.Time) string {
 }
 
 func (u *watchUI) draw(d canvas, now time.Time) {
+	if u.page == pageTimeSync {
+		u.drawTimeSync(d, now)
+		return
+	}
 	if u.page == pageClock {
 		now = u.clock.Now(now)
 		writeLine(d, &uifont.Bold18, 18, 31, "goPine", accent)

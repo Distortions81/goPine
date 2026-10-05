@@ -31,12 +31,16 @@ func (u *watchUI) beginClockEdit(page page, now time.Time) {
 func (u *watchUI) handleClockTap(e inputEvent, now time.Time) {
 	if u.page == pageTimeSettings {
 		switch {
-		case inRect(e, 16, 48, 224, 96):
+		case inRect(e, 16, 42, 224, 82):
 			u.beginClockEdit(pageSetTime, now)
-		case inRect(e, 16, 104, 224, 152):
+		case inRect(e, 16, 88, 224, 128):
 			u.beginClockEdit(pageSetDate, now)
-		case inRect(e, 16, 160, 224, 208):
+		case inRect(e, 16, 134, 224, 174):
 			u.use24 = !u.use24
+		case inRect(e, 16, 180, 224, 220):
+			u.sync.Start(now)
+			u.syncStatus = ""
+			u.page = pageTimeSync
 		}
 		return
 	}
@@ -97,19 +101,14 @@ func clockControl(d canvas, x, y, w, h int16, label string, c color.RGBA) {
 func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 	if u.page == pageTimeSettings {
 		centered(d, &uifont.Bold18, 29, "TIME & DATE", white)
-		clockControl(d, 16, 48, 208, 48, "SET TIME", card)
-		clockControl(d, 16, 104, 208, 48, "SET DATE", card)
+		clockControl(d, 16, 42, 208, 40, "SET TIME", card)
+		clockControl(d, 16, 88, 208, 40, "SET DATE", card)
 		label := "FORMAT: 12 HOUR"
 		if u.use24 {
 			label = "FORMAT: 24 HOUR"
 		}
-		clockControl(d, 16, 160, 208, 48, label, card)
-		local := u.clock.Now(now)
-		label = local.Format("02 Jan 2006  15:04")
-		if !u.use24 {
-			label = local.Format("02 Jan 2006  3:04 PM")
-		}
-		centered(d, &uifont.Regular18, 234, label, muted)
+		clockControl(d, 16, 134, 208, 40, label, card)
+		clockControl(d, 16, 180, 208, 40, "SYNC TIME", positive)
 		return
 	}
 	title := "SET TIME"

@@ -3,16 +3,30 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 bootstrap=false
+target=./targets/pinetime-mcuboot.json
+if [[ ${1:-} == --ble ]]; then
+  target=./targets/pinetime-mcuboot-ble.json
+  shift
+fi
 if [[ ${1:-} == --bootstrap ]]; then
   bootstrap=true
   shift
 fi
 if [[ $# != 1 || ! $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?$ ]]; then
-  printf 'Usage: bash scripts/build-ota.sh [--bootstrap] major.minor.revision[+build]\n' >&2
+  printf 'Usage: bash scripts/build-ota.sh [--ble | --bootstrap] major.minor.revision[+build]\n' >&2
   exit 2
 fi
 version=$1
 tinygo_bin=${TINYGO:-tinygo}
+if [[ $target == *-ble.json ]]; then
+  if $bootstrap; then
+    printf 'Bluetooth candidates are OTA-only; do not combine --ble and --bootstrap.\n' >&2
+    exit 2
+  fi
+  python3 scripts/build-ble.py \
+    --infinitime "${INFINITIME_SOURCE:-build/deps/InfiniTime}" \
+    --tinygo-root "$("$tinygo_bin" env TINYGOROOT)"
+fi
 firmware_time=${FIRMWARE_TIME:-$(date +%H:%M:%S)}
 firmware_date=${FIRMWARE_DATE:-$(date +%Y-%m-%d)}
 pack_args=()
@@ -55,7 +69,7 @@ if $bootstrap; then
     -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareDate=$firmware_date -X main.firmwareVersion=$version" \
     -o "$output/gopine-recovery-setup-$version.hex" .
 fi
-"$tinygo_bin" build -target=./targets/pinetime-mcuboot.json \
+"$tinygo_bin" build -target="$target" \
   -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareDate=$firmware_date -X main.firmwareVersion=$version" \
   -o "$output/gopine-$version.elf" .
 go run ./cmd/otapack -elf "$output/gopine-$version.elf" -version "$version" \

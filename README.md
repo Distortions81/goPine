@@ -59,8 +59,14 @@ or your own timezone). Set the correct time after flashing in **Settings →
 Time & Date**. Planned goPine OTA/revert resets now hand off the date/hour in
 flash and minutes/seconds in retention registers, with no periodic flash writes.
 Restored time is approximate: reboot/recovery time is not counted. Unexpected
-resets or power loss fall back to the build seed. Bluetooth time synchronization
-is not implemented yet; the new handoff still needs hardware testing.
+resets or power loss fall back to the build seed. The opt-in Bluetooth candidate
+adds **Sync Time**, an InfiniLink hint, on-watch approval, and a PC sender.
+Version 0.2.5 successfully received PC time after a reboot, confirmed by the user
+on 2026-10-05; reopening sync without rebooting exposed a radio restart bug. Version 0.2.6
+extends the sync window from one to five minutes and restores the radio crystal
+clock when reopening sync; it is not yet installed.
+Bluetooth stays off outside that explicit sync window. See [time sync](docs/time.md).
+The planned-reset handoff still needs dedicated hardware testing.
 
 The watch face uses large, high-contrast time with 12-hour time by default.
 A battery gauge and readable percentage show estimated remaining charge;

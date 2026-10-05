@@ -25,6 +25,9 @@ func run() error {
 	defer display.Close()
 
 	ui := newWatchUI(firmwareState())
+	syncController := timeSyncController{radio: newTimeRadio()}
+	activeTimeRadio = syncController.radio
+	defer func() { syncController.close(); activeTimeRadio = nil }()
 	persistence := restoreClock(&ui, time.Now())
 	beforeReset := func() {
 		// Best effort: clock storage failure must not prevent OTA or rollback.
@@ -59,6 +62,12 @@ func run() error {
 	nextPower := time.Now().Add(time.Second)
 	for {
 		now := time.Now()
+		syncController.update(&ui, now)
+		if ui.sync.Open {
+			if d, ok := display.(interface{ keepAwake() }); ok {
+				d.keepAwake()
+			}
+		}
 		if !now.Before(nextPower) {
 			power = display.PowerStatus()
 			nextPower = now.Add(time.Second)
@@ -76,6 +85,9 @@ func run() error {
 		delay := min(nextMinuteDelay(ui.clock.Now(now)), time.Until(nextPower))
 		if ui.page == pageUpdate {
 			delay = min(delay, time.Until(ui.expires))
+		}
+		if ui.page == pageTimeSync {
+			delay = min(delay, 50*time.Millisecond)
 		}
 		event, err := display.Wait(max(delay, time.Millisecond))
 		if err != nil {
@@ -111,6 +123,7 @@ func run() error {
 			}
 			painted = false
 		}
+		syncController.update(&ui, time.Now())
 	}
 }
 
@@ -123,6 +136,7 @@ type frameKey struct {
 	step                  int
 	edit                  clockEdit
 	approximate           bool
+	syncState             string
 }
 
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
@@ -130,7 +144,11 @@ func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 	if u.page == pageClock || u.page == pageTimeSettings {
 		clock = u.clock.Now(now).Format("2006-01-02 15:04")
 	}
-	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep, u.edit, u.clock.approximate}
+	syncState := ""
+	if u.page == pageTimeSync {
+		syncState = fmt.Sprintf("%t/%t/%d/%s", u.sync.Open, u.sync.Pending, now.Unix(), u.syncStatus)
+	}
+	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep, u.edit, u.clock.approximate, syncState}
 }
 
 func formatTime(t time.Time) string {

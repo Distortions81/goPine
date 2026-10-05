@@ -118,35 +118,80 @@ adds elapsed runtime since receipt. Tests cover byte layout, local-time
 semantics, rollover during confirmation, cancellation, expiry, and 32-bit integer
 arithmetic. These are protocol/session tests, not radio interoperability tests.
 
-There is no active receiver, sync screen, or host sender yet. Choosing between
-a standard GATT service (requiring stack integration below) and a smaller custom
-advertising-only PC broadcast determines the remaining implementation. The
-latter would not be a standard Current Time Service or work with ordinary
-phone time-sync clients. No radio, bootloader, or installed firmware was changed.
+The opt-in Bluetooth candidate implements the radio bridge, sync screen, and PC
+sender. On 2026-10-05, the 0.2.5 image passed OTA validation and the user reached
+Sync Time. The host detected its `InfiniTime` advertisement and CTS service at
+`C9:9E:15:7A:69:B4` once, but subsequent discovery/direct connection attempts
+failed even with a reported running countdown. The USB adapter still detected
+other devices. After the user rebooted the watch, the automated PC sender
+connected immediately on discovery and received a successful write response
+for local time `2026-10-05T03:07:33-06:00`. The user confirmed that the sync worked.
+This validates one PC-to-watch sync after reboot, not repeated windows,
+InfiniLink interoperability, or radio-off power consumption.
 
-## Proposed sync experience — not yet connected to the UI/radio
+Version 0.2.6 extends both UI and radio deadlines from one to five minutes using
+one duration passed from Go to the C bridge. Source inspection also found that
+the stop path released HFXO, while NimBLE's RF-management-disabled configuration
+requested it only once at initialization. Each new sync window now explicitly
+reacquires HFXO before starting the host. This matches the observed restart
+failure but still requires on-watch confirmation. This revision is not yet
+installed. Sleep current remains unmeasured.
 
-Add **Sync time** to Time & Date. Opening it would start a short, cancelable
-Bluetooth window while goPine remains running, without entering OTA recovery.
-A PC or phone would send its current local date/time. The watch would show the
-proposed change for approval, then stop advertising on acceptance, cancellation,
-sleep, or timeout. Apply elapsed time since receipt when approving so time spent
-on the confirmation screen does not leave the clock behind. Pairing and sender
-authentication need separate design: physical approval is not authentication.
+## Bluetooth candidate: explicit Sync Time window
 
-Use the standard Current Time Service (0x1805), Current Time characteristic
-(0x2A2B), with strict payload length/calendar validation and explicit local-time
-semantics. InfiniTime already uses read/write Current Time and Local Time
-Information characteristics. Matching their UUIDs and payloads is a useful
-interop target, but does not guarantee a companion app will recognize goPine.
-Validate each client rather than claiming universal app compatibility.
+Swipe left → Time & Date → Sync Time. Only this action initializes/starts NimBLE.
+The screen says **Open InfiniLink app on your iPhone / Connect to InfiniTime /
+Then confirm here**. InfiniLink is the iOS companion, not an Android requirement;
+the PC sender is an alternative. The name matches InfiniLink's discovery filter,
+not the firmware identity: this is still goPine, and it exposes no Bluetooth DFU
+service while syncing. A distinct, stable random address separates goPine's GATT
+cache from InfiniTime recovery (factory address with the low bit toggled).
 
-For the host here, a small BlueZ/Bleak command would offer a single sync action.
-A Web Bluetooth page could offer the same action on supported desktop/Android
-browsers; Linux browser support may require flags, so the host command should
-remain available. Do not promise browser-only support on all phones. An iPhone
-path requires separately tested native BLE client support. No sync tool or
-active Bluetooth service is included in this revision.
+The five-minute window (0.2.6; one minute in 0.2.5) keeps the display awake; the side button still sleeps and
+cancels it. A received proposal is validated and shown with ACCEPT/BACK. No
+write changes the clock without a fresh on-screen tap. A second sender cannot
+replace a pending proposal. Cancel, Back, swipe-right, sleep, expiry, errors,
+and receipt of a proposal close the radio window. The stack allows 200ms for
+the ATT response before teardown, then bounds graceful disconnect to 500ms
+before resetting the controller to standby. No background advertising,
+pairing, bonding, scan, or reconnect is enabled. The MCU RTC used for stack
+bookkeeping is not a Bluetooth transmission; sleep-current verification remains
+required. The receiver is unauthenticated: check the displayed time carefully.
+
+The GATT service is Current Time `0x1805`, with readable/writable `0x2A2B`.
+Its write response acknowledges receipt, **not user acceptance**. The strict
+ten-byte decoder remains available. A narrow compatibility adapter also accepts
+InfiniLink's 9/10-byte packets with Sunday-based weekday and ambiguous fractional
+tail, deriving weekday and discarding those sub-seconds. The first seven date/time
+bytes remain strictly validated (2000–2099). Standard CTS fractions are preserved.
+Time spent queued or awaiting confirmation is added on acceptance. Timezone/DST
+are copied as displayed local calendar time, not continuously managed.
+
+Compatibility was checked against InfiniLink source commit
+`60abe2d2c67aff67726855374385a499d9353a94`:
+[discovery](https://github.com/InfiniTimeOrg/InfiniLink/blob/60abe2d2c67aff67726855374385a499d9353a94/InfiniLink/BLE/BLEManager.swift),
+[time encoding](https://github.com/InfiniTimeOrg/InfiniLink/blob/60abe2d2c67aff67726855374385a499d9353a94/InfiniLink/BLE/SetTime.swift).
+App Store/TestFlight versions still need testing on a real phone.
+
+### PC alternative
+
+Install `bleak` in a Python virtual environment, then open Sync Time on the watch:
+
+```sh
+python3 scripts/sync-time.py --scan --adapter hci1
+python3 scripts/sync-time.py --address WATCH_ADDRESS --adapter hci1 --wait 300
+```
+
+The sender can run before opening Sync Time. It waits up to five minutes by
+default, retries discovery/connection, and connects immediately using the
+discovered device without a second scan. Time is sampled just before sending.
+It sends once: an uncertain write asks you to check the watch instead of blindly
+retrying. This host wait does not extend an already installed firmware's window.
+
+Use the address printed by the scan, not the recovery address. Omit `--adapter`
+on non-Linux hosts. The tool only writes to the explicitly selected device after
+checking its CTS service. It does not toggle adapters or update firmware.
+Check the watch and tap ACCEPT. Only one PC/phone should connect at a time.
 
 ## Firmware integration constraint
 
@@ -155,13 +200,13 @@ image starts at 0x8020 with RAM at 0x20000000; TinyGo 0.42.0's S132 target start
 at 0x26000 and reserves RAM through 0x200039c0. Simply importing the Bluetooth
 package is therefore not a compatible change to this firmware layout.
 
-Preferred investigation: a NimBLE integration suitable for the existing
-MCUboot layout, following InfiniTime's stack approach. Validate radio/interrupt
-ownership, RTC/scheduler coexistence, SPI/flash operations, sleep current, and
-flash/RAM/stack headroom in an isolated build before changing the shipped image.
-SoftDevice would instead require a deliberately redesigned boot/memory layout
-and recovery plan. Neither approach is implemented or hardware-validated here.
-Do not overwrite MCUboot to experiment on the user's current watch.
+The candidate uses a cooperative NimBLE port with the existing MCUboot layout.
+NimBLE uses RADIO/TIMER0/RTC0/RNG and its reserved PPI channels; TinyGo's runtime
+continues using RTC1. Radio interrupts stay in C, while host queues and UI work
+run cooperatively between display strips and waits. C allocations use a bounded
+8 KiB non-moving arena. Normal non-Bluetooth and provisioning targets are unchanged.
+See [radio build and validation](../internal/ble_nimble/README.md). Do not overwrite
+MCUboot or flash a standalone image to try this feature.
 
 References:
 

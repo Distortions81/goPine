@@ -22,6 +22,8 @@ jobs:
         run: go test ./...
       - name: Vet
         run: go vet ./...
+      - name: Test PC time sender
+        run: python3 scripts/test_sync_time.py
       - name: Check module files
         run: go mod tidy -diff
       - name: Build simulator
@@ -45,6 +47,21 @@ jobs:
         env:
           FIRMWARE_TIME: "00:00:00"
         run: bash scripts/build-ota.sh 0.2.0
+      - uses: actions/checkout@v7
+        with:
+          repository: InfiniTimeOrg/InfiniTime
+          ref: 6c119eb52206b580b556b41633dddc1e1b66a8da
+          path: build/deps/InfiniTime
+          persist-credentials: false
+      - name: Install C port test tools
+        run: sudo apt-get update && sudo apt-get install --yes clang llvm
+      - name: Test cooperative Bluetooth primitives
+        run: python3 scripts/test-ble-port.py --infinitime build/deps/InfiniTime
+      - name: Build experimental Bluetooth time-sync candidate
+        env:
+          FIRMWARE_TIME: "00:00:00"
+          FIRMWARE_DATE: "2026-10-05"
+        run: bash scripts/build-ota.sh --ble 0.2.6
       - name: Build wired recovery setup
         env:
           FIRMWARE_TIME: "00:00:00"

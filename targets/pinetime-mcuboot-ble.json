@@ -1,0 +1,5 @@
+{
+  "inherits": ["./targets/pinetime-mcuboot.json"],
+  "build-tags": ["bletime"],
+  "ldflags": ["-Lbuild/ble", "-lgopineble"]
+}

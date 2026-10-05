@@ -10,6 +10,7 @@ import (
 type clockDisplay interface {
 	drivers.Displayer
 	FillScreen(color.RGBA)
-	Wait(time.Duration) bool
+	PowerStatus() powerStatus
+	Wait(time.Duration) (bool, error)
 	Close() error
 }

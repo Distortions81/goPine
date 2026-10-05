@@ -17,6 +17,10 @@ func main() {
 }
 
 func run() error {
+	if err := initializeClock(); err != nil {
+		return fmt.Errorf("initialize clock: %w", err)
+	}
+
 	display, err := openDisplay()
 	if err != nil {
 		return fmt.Errorf("open display: %w", err)
@@ -46,21 +50,46 @@ func run() error {
 		now := time.Now()
 		msg := formatTime(now)
 		textWidth, _ := tinyfont.LineWidth(font, msg)
-		tinyfont.WriteLine(display, font, width/2-int16(textWidth/2), height/2+fontHeight/2, msg, color.RGBA{255, 255, 255, 255})
+		meridiem := formatMeridiem(now)
+		meridiemWidth, _ := tinyfont.LineWidth(&tinyfont.Picopixel, meridiem)
+		lineWidth := int16(textWidth) + 4 + int16(meridiemWidth)
+		textX := width/2 - lineWidth/2
+		baseline := height/2 + fontHeight/2
+		tinyfont.WriteLine(display, font, textX, baseline, msg, color.RGBA{255, 255, 255, 255})
+		tinyfont.WriteLine(display, &tinyfont.Picopixel, textX+int16(textWidth)+4, baseline, meridiem, color.RGBA{180, 180, 180, 255})
+
+		power := formatPowerStatus(display.PowerStatus())
+		powerWidth, _ := tinyfont.LineWidth(&tinyfont.Picopixel, power)
+		tinyfont.WriteLine(display, &tinyfont.Picopixel, width/2-int16(powerWidth/2), height-10, power, color.RGBA{160, 200, 160, 255})
 
 		if err := display.Display(); err != nil {
 			return fmt.Errorf("refresh display: %w", err)
 		}
 
 		// Sleep until the next minute.
-		if !display.Wait(nextMinuteDelay(now)) {
+		keepRunning, err := display.Wait(nextMinuteDelay(now))
+		if err != nil {
+			return fmt.Errorf("wait for display: %w", err)
+		}
+		if !keepRunning {
 			return nil
 		}
 	}
 }
 
 func formatTime(t time.Time) string {
-	return fmt.Sprintf("%02d:%02d", t.Hour(), t.Minute())
+	hour := t.Hour() % 12
+	if hour == 0 {
+		hour = 12
+	}
+	return fmt.Sprintf("%d:%02d", hour, t.Minute())
+}
+
+func formatMeridiem(t time.Time) string {
+	if t.Hour() < 12 {
+		return "AM"
+	}
+	return "PM"
 }
 
 func nextMinuteDelay(t time.Time) time.Duration {

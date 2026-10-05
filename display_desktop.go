@@ -68,13 +68,17 @@ func (d *desktopDisplay) Display() error {
 	return d.window.UpdateSurface()
 }
 
-func (d *desktopDisplay) Wait(duration time.Duration) bool {
+func (d *desktopDisplay) PowerStatus() powerStatus {
+	return powerStatus{Percent: 100, State: chargeExternalPower}
+}
+
+func (d *desktopDisplay) Wait(duration time.Duration) (bool, error) {
 	deadline := time.Now().Add(duration)
 	for time.Now().Before(deadline) {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			switch event.(type) {
 			case *sdl.QuitEvent:
-				return false
+				return false, nil
 			case *sdl.WindowEvent:
 				_ = d.window.UpdateSurface()
 			}
@@ -88,7 +92,7 @@ func (d *desktopDisplay) Wait(duration time.Duration) bool {
 			time.Sleep(remaining)
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (d *desktopDisplay) Close() error {

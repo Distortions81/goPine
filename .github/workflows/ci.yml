@@ -40,4 +40,4 @@ jobs:
           tinygo-version: "0.42.0"
           install-binaryen: "false"
       - name: Build PineTime firmware
-        run: tinygo build -target=pinetime -o goPine.hex .
+        run: tinygo build -target=pinetime -ldflags="-X main.firmwareTime=00:00:00" -o goPine.hex .

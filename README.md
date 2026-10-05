@@ -31,25 +31,35 @@ sudo apt install libsdl2-dev
 
 ## PineTime firmware
 
-Build a flashable PineTime image with TinyGo's current `pinetime` target:
+Build a flashable PineTime image with TinyGo's current `pinetime` target. The
+linker value seeds the watch's low-power RTC with the current local time:
 
 ```sh
-tinygo build -target=pinetime -o goPine.hex .
+tinygo build -target=pinetime -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" -o goPine.hex .
 ```
 
 Flash it with the programmer configured for your PineTime development setup:
 
 ```sh
-tinygo flash -target=pinetime .
+tinygo flash -target=pinetime -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" .
 ```
 
-The PineTime does not have a battery-backed real-time clock. The displayed
-time therefore depends on the clock value supplied by the firmware environment.
+The PineTime's 32.768 kHz RTC keeps time while the CPU sleeps, but it is not a
+battery-backed calendar clock and resets when the watch reboots. Until BLE time
+synchronization is implemented, a rebuild/reflash supplies the initial time and
+the displayed value may be behind by the time spent flashing.
+
+The watch face uses 12-hour time by default, shows the estimated battery
+percentage, and indicates `CHG` while charging or `PWR` when external power is
+connected and charging has completed. The display and backlight turn off after
+15 seconds. Tap the screen to wake it or extend that timeout. Press the side
+button to wake the screen or turn it off immediately; a long press still allows
+a bootloader watchdog reset.
 
 ## Verification
 
 ```sh
 go test ./...
 go vet ./...
-tinygo build -target=pinetime -o /tmp/goPine.hex .
+tinygo build -target=pinetime -ldflags="-X main.firmwareTime=00:00:00" -o /tmp/goPine.hex .
 ```

@@ -91,7 +91,7 @@ func (u *watchUI) handleClockTap(e inputEvent, now time.Time) {
 func clockControl(d canvas, x, y, w, h int16, label string, c color.RGBA) {
 	gfx.RoundBox(d, x, y, w, h, 6, c)
 	tw, _ := tinyfont.LineWidth(&uifont.Bold18, label)
-	tinyfont.WriteLine(d, &uifont.Bold18, x+(w-int16(tw))/2, y+h/2+7, label, white)
+	writeLine(d, &uifont.Bold18, x+(w-int16(tw))/2, y+h/2+7, label, white)
 }
 
 func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
@@ -131,7 +131,7 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			clockControl(d, x, 136, 88, 44, "-", card)
 			label := fmt.Sprintf("%02d", v)
 			w, _ := tinyfont.LineWidth(&uifont.Bold24, label)
-			tinyfont.WriteLine(d, &uifont.Bold24, x+(88-int16(w))/2, 114, label, white)
+			writeLine(d, &uifont.Bold24, x+(88-int16(w))/2, 114, label, white)
 			caption := "MINUTE"
 			if i == 0 {
 				caption = "HOUR"
@@ -142,10 +142,10 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 					caption = "PM"
 				}
 				w, _ = tinyfont.LineWidth(&uifont.Meridiem, caption)
-				tinyfont.WriteLine(d, &uifont.Meridiem, x+(88-int16(w))/2, 131, caption, muted)
+				writeLine(d, &uifont.Meridiem, x+(88-int16(w))/2, 131, caption, muted)
 			} else {
 				w, _ = tinyfont.LineWidth(&tinyfont.Picopixel, caption)
-				tinyfont.WriteLine(d, &tinyfont.Picopixel, x+(88-int16(w))/2, 128, caption, muted)
+				writeLine(d, &tinyfont.Picopixel, x+(88-int16(w))/2, 128, caption, muted)
 			}
 		}
 		centered(d, &uifont.Regular18, 114, ":", muted)
@@ -156,10 +156,10 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			clockControl(d, x, 136, 64, 44, "-", card)
 			label := fmt.Sprintf("%02d", v)
 			w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
-			tinyfont.WriteLine(d, &uifont.Bold18, x+(64-int16(w))/2, 114, label, white)
+			writeLine(d, &uifont.Bold18, x+(64-int16(w))/2, 114, label, white)
 			labels := [...]string{"YEAR", "MONTH", "DAY"}
 			w, _ = tinyfont.LineWidth(&tinyfont.Picopixel, labels[i])
-			tinyfont.WriteLine(d, &tinyfont.Picopixel, x+(64-int16(w))/2, 128, labels[i], muted)
+			writeLine(d, &tinyfont.Picopixel, x+(64-int16(w))/2, 128, labels[i], muted)
 		}
 	}
 	clockControl(d, 12, 188, 102, 44, "CANCEL", card)

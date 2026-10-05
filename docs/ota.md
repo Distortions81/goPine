@@ -14,8 +14,9 @@ need hardware verification.
 2. On a confirmed goPine build, swipe left to **Settings**, tap **Firmware
    Update**, then hold **HOLD 3 SECONDS** continuously until the countdown finishes.
    The prompt expires after 30 seconds. Releasing early or dragging away cancels
-   the hold; swipe right or tap the back arrow to return to Settings. Sleep, an
-   invalid touch sample, or a gap in contact samples also cancels the hold.
+   the hold; swipe right or tap the back arrow to return to Settings. Sleep or a
+   prolonged loss of valid contact samples also cancels the hold. Brief invalid
+   reports are ignored and cannot advance the hold.
    The watch needs at least 20% estimated battery or external power. Keeping it
    on its charger is recommended throughout the update.
 3. goPine verifies the factory recovery image, stages it, and reboots through
@@ -291,3 +292,41 @@ MCUboot builds are checked; actual redraw speed, edge appearance, and touch
 responsiveness still require watch testing. Build a fresh time-seeded package
 with `bash scripts/build-ota.sh 0.2.4` before uploading. This revision has not
 been installed on the watch yet.
+
+### Touch-hold repair awaiting watch validation
+
+The installed build's hold indicator was reported to disappear immediately.
+Inspection found that a single failed I2C read or malformed coordinate canceled
+the entire gesture, and display drawing could delay input sampling. Without an
+on-device trace, these are candidate causes, not a confirmed hardware diagnosis.
+
+The repair is based on actual PineTime implementations:
+
+- [InfiniTime CST816S](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/drivers/Cst816s.cpp)
+  enables periodic touch interrupts (`0xFA = 0x70`). Its
+  [touch handler](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/touchhandler/TouchHandler.cpp)
+  ignores invalid reports instead of interpreting them as a release.
+- [TinyGo PineTime board](https://github.com/aykevl/board/blob/main/board-pinetime.go)
+  documents sporadic bad coordinates and retains the last valid point. Its
+  latched, continuous-reading approach is different from InfiniTime's IRQ-driven
+  approach; it does not establish that all between-interrupt reads must fail.
+- [wasp-os PineTime board](https://github.com/wasp-os/wasp-os/blob/master/wasp/boards/pinetime/watch.py.in)
+  uses the [CST816S driver](https://github.com/wasp-os/wasp-os/blob/master/wasp/drivers/cst816s.py),
+  which reads on falling-edge interrupts and ignores failed reads. Its gesture
+  interface is not itself a model for goPine's three-second confirmation.
+
+goPine now reads reports only after IRQs and tolerates brief invalid reports
+without advancing the hold. More than 250ms without valid contact cancels it
+and requires release before rearming; this is a goPine safety bound, not a
+claimed hardware specification. Valid release or movement cancels immediately.
+An unusable release position also cancels without activating a control.
+Sampling between render strips and an allocation-free event queue keep drawing
+from starving input. Queued release/cancel events remove obsolete holds.
+The non-rotated text path preserves strip clipping instead of rasterizing every
+antialiased glyph fifteen times. No controller register, bootloader, or recovery
+change is needed.
+
+Host regressions cover intermittent bad coordinates, read failures, missing
+IRQs, release/rearm, queue overflow, and text pixel equivalence. Hardware checks
+still required: a steady countdown, early release cancellation, movement
+cancellation, and successful entry to recovery after a deliberate full hold.

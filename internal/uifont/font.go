@@ -44,8 +44,14 @@ func (g *glyph) Info() tinyfont.GlyphInfo { return g.info }
 func (g *glyph) Draw(d drivers.Displayer, x, y int16, c color.RGBA) {
 	x += int16(g.info.XOffset)
 	y += int16(g.info.YOffset)
-	for yy := 0; yy < int(g.info.Height); yy++ {
-		for xx := 0; xx < int(g.info.Width); xx++ {
+	x0, y0, x1, y1 := 0, 0, int(g.info.Width), int(g.info.Height)
+	if clip, ok := d.(interface{ ClipBounds() (int, int, int, int) }); ok {
+		l, t, r, b := clip.ClipBounds()
+		x0, y0 = max(x0, l-int(x)), max(y0, t-int(y))
+		x1, y1 = min(x1, r-int(x)), min(y1, b-int(y))
+	}
+	for yy := y0; yy < y1; yy++ {
+		for xx := x0; xx < x1; xx++ {
 			i := yy*int(g.info.Width) + xx
 			a := g.pixels[i/2]
 			if i%2 == 0 {

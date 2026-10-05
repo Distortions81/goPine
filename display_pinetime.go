@@ -22,6 +22,7 @@ type pineTimeDisplay struct {
 	screenOn          bool
 	sleepAt           time.Time
 	touch             touchController
+	touchEvents       touchQueue
 }
 
 const (
@@ -30,6 +31,7 @@ const (
 	batteryVoltagePin   = machine.Pin(31)
 	screenTimeout       = 15 * time.Second
 	buttonPollInterval  = 20 * time.Millisecond
+	touchPollInterval   = 2 * time.Millisecond
 )
 
 func openDisplay() (clockDisplay, error) {
@@ -148,6 +150,7 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 		pressed := d.readButton()
 		if pressed && !d.buttonPressed {
 			d.buttonPressed = true
+			d.touchEvents.clear()
 			d.touch.tracker.cancel()
 			if d.screenOn {
 				if err := d.setScreen(false); err != nil {
@@ -164,17 +167,19 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 			}
 		}
 		d.buttonPressed = pressed
-		if touch := d.touch.Poll(); touch.Activity {
+		d.serviceInput()
+		if touch := d.touchEvents.pop(); touch.Activity {
 			d.sleepAt = now.Add(screenTimeout)
 			if !d.screenOn {
+				d.touchEvents.clear()
 				d.touch.tracker.cancel()
 				if err := d.setScreen(true); err != nil {
 					return inputEvent{}, err
 				}
 				return inputEvent{Kind: inputWake}, nil
 			}
-			// Bound event rate even when the caller skips an unchanged frame.
-			time.Sleep(buttonPollInterval)
+			// Bound event rate without sleeping through the next touch IRQ.
+			time.Sleep(touchPollInterval)
 			return touch.inputEvent, nil
 		}
 
@@ -183,13 +188,26 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 				return inputEvent{}, err
 			}
 			d.touch.tracker.cancel()
+			d.touchEvents.clear()
 			return inputEvent{Kind: inputSleep}, nil
 		}
 		if d.screenOn && !now.Before(refreshAt) {
 			return inputEvent{Kind: inputRefresh}, nil
 		}
 
-		time.Sleep(buttonPollInterval)
+		interval := buttonPollInterval
+		if d.touch.tracker.down {
+			interval = touchPollInterval // Catch brief IRQ windows during contact.
+		}
+		time.Sleep(interval)
+	}
+}
+
+// Called between raster strips as well as from Wait. Never dispatch UI actions
+// recursively from a draw; queue observations for the normal input loop.
+func (d *pineTimeDisplay) serviceInput() {
+	if !d.touchEvents.push(d.touch.Poll()) {
+		d.touch.tracker.cancel()
 	}
 }
 

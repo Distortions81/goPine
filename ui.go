@@ -196,7 +196,7 @@ var (
 func centered(d canvas, font tinyfont.Fonter, y int16, text string, c color.RGBA) {
 	width, _ := d.Size()
 	w, _ := tinyfont.LineWidth(font, text)
-	tinyfont.WriteLine(d, font, width/2-int16(w)/2, y, text, c)
+	writeLine(d, font, width/2-int16(w)/2, y, text, c)
 }
 
 func drawButton(d canvas, x, width int16, label string, confirm bool) {
@@ -206,7 +206,7 @@ func drawButton(d canvas, x, width int16, label string, confirm bool) {
 	}
 	gfx.RoundBox(d, x, 174, width, 44, 6, c)
 	w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
-	tinyfont.WriteLine(d, &uifont.Bold18, x+width/2-int16(w)/2, 202, label, white)
+	writeLine(d, &uifont.Bold18, x+width/2-int16(w)/2, 202, label, white)
 }
 
 func drawLines(d canvas, text string) {
@@ -238,7 +238,7 @@ func (u *watchUI) timeLabel(now time.Time) string {
 func (u *watchUI) draw(d canvas, now time.Time) {
 	if u.page == pageClock {
 		now = u.clock.Now(now)
-		tinyfont.WriteLine(d, &uifont.Bold18, 18, 31, "goPine", accent)
+		writeLine(d, &uifont.Bold18, 18, 31, "goPine", accent)
 		meridiem := ""
 		if !u.use24 {
 			meridiem = formatMeridiem(now)

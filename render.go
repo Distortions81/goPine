@@ -31,6 +31,9 @@ func (r *frameRenderer) render(d clockDisplay, draw func(canvas)) error {
 		r.strip.bitmap = pixel.NewImage[pixel.RGB444BE](240, stripHeight)
 	}
 	for i := range r.hashes {
+		if input, ok := d.(interface{ serviceInput() }); ok {
+			input.serviceInput()
+		}
 		r.strip.y = int16(i * stripHeight)
 		r.strip.FillScreen(black)
 		draw(&r.strip)
@@ -41,6 +44,9 @@ func (r *frameRenderer) render(d clockDisplay, draw func(canvas)) error {
 			}
 			r.hashes[i], r.valid[i] = hash, true
 		}
+	}
+	if input, ok := d.(interface{ serviceInput() }); ok {
+		input.serviceInput()
 	}
 	if err := d.Display(); err != nil {
 		r.invalidate()

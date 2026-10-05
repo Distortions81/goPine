@@ -2,6 +2,8 @@ package main
 
 import "time"
 
+const touchSampleTimeout = 250 * time.Millisecond
+
 type touchEvent struct {
 	Activity bool
 	Tap      bool
@@ -29,12 +31,17 @@ func (t *touchTracker) decode(data [6]byte, now time.Time) touchEvent {
 	points := data[1] & 0xf
 	event := touchEvent{Activity: true, inputEvent: inputEvent{Kind: inputCancel, X: x, Y: y}}
 	gesture := data[0]
-	if x >= 240 || y >= 240 || points > 1 || (gesture > 5 && gesture != 0x0b && gesture != 0x0c) {
+	if points == 0 && (x >= 240 || y >= 240) {
+		// Even an unusable release position ends contact, but cannot tap.
 		t.cancel()
+		t.suppress = false
 		return event
 	}
+	if x >= 240 || y >= 240 || points > 1 || (gesture > 5 && gesture != 0x0b && gesture != 0x0c) {
+		return t.missingSample(now)
+	}
 	if points == 1 {
-		if t.down && now.Sub(t.last) > 250*time.Millisecond {
+		if t.down && now.Sub(t.last) > touchSampleTimeout {
 			t.cancel() // Lost contact history; require release before rearming.
 		}
 		t.last = now
@@ -68,6 +75,30 @@ func (t *touchTracker) decode(data [6]byte, now time.Time) touchEvent {
 	}
 	t.down, t.suppress = false, false
 	return event
+}
+
+// Match InfiniTime's IRQ-driven reads with EnTouch enabled (periodic contact
+// interrupts). Do not depend on out-of-event I2C availability or treat a cached
+// register read as a new sample. PineTime drivers also filter sporadic invalid
+// reports: these neither advance a hold nor invent a release. Bound that grace
+// period so lost release events cannot leave contact latched indefinitely.
+func (t *touchTracker) poll(bus touchBus, pending bool, now time.Time) touchEvent {
+	if !pending {
+		return t.missingSample(now)
+	}
+	var data [6]byte
+	if err := bus.Tx(touchAddress, []byte{0x01}, data[:]); err != nil {
+		return t.missingSample(now)
+	}
+	return t.decode(data, now)
+}
+
+func (t *touchTracker) missingSample(now time.Time) touchEvent {
+	if t.down && now.Sub(t.last) > touchSampleTimeout {
+		t.cancel()
+		return touchEvent{Activity: true, inputEvent: inputEvent{Kind: inputCancel}}
+	}
+	return touchEvent{}
 }
 
 func abs16(n int16) int16 {

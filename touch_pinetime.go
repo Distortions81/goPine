@@ -51,22 +51,15 @@ func (t *touchController) Configure() error {
 }
 
 func (t *touchController) Poll() touchEvent {
-	if !t.ready || (t.pending.Get() == 0 && !t.tracker.down) {
+	if !t.ready {
 		return touchEvent{}
 	}
 	state := interrupt.Disable()
+	pending := t.pending.Get() != 0
 	t.pending.Set(0)
 	interrupt.Restore(state)
 
-	// Reading the event registers acknowledges the controller. The interrupt
-	// itself is enough to count as activity, even if the read races its brief
-	// awake window.
-	var event [6]byte
-	if err := machine.I2C1.Tx(touchAddress, []byte{0x01}, event[:]); err != nil {
-		t.tracker.cancel()
-		return touchEvent{Activity: true, inputEvent: inputEvent{Kind: inputCancel}}
-	}
-	return t.tracker.decode(event, time.Now())
+	return t.tracker.poll(machine.I2C1, pending, time.Now())
 }
 
 func (t *touchController) Close() {

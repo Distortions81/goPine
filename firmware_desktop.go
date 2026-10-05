@@ -21,5 +21,7 @@ func keepFirmware() error {
 	return nil
 }
 
-func revertFirmware() error               { return errors.New("simulator: reset would revert") }
-func startFirmwareUpdate(func(int)) error { return errors.New("simulator: no Bluetooth updater") }
+func revertFirmware(func()) error { return errors.New("simulator: reset would revert") }
+func startFirmwareUpdate(func(int), func()) error {
+	return errors.New("simulator: no Bluetooth updater")
+}

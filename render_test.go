@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Distortions81/goPine/internal/gfx"
 	"tinygo.org/x/drivers/pixel"
 )
 
@@ -23,6 +24,7 @@ func (d *memoryDisplay) Close() error                           { return nil }
 func (d *memoryDisplay) SetPixel(x, y int16, c color.RGBA) {
 	d.singles++
 	if x >= 0 && x < 240 && y >= 0 && y < 240 {
+		c = gfx.Over(d.pixels[int(y)*240+int(x)], c)
 		d.pixels[int(y)*240+int(x)] = pixel.NewColor[pixel.RGB444BE](c.R, c.G, c.B).RGBA()
 	}
 }
@@ -51,7 +53,7 @@ func (d *memoryDisplay) DrawBitmap(x, y int16, b pixel.Image[pixel.RGB444BE]) er
 
 func TestStripRendererMatchesDirectPixelsAndSkipsUnchanged(t *testing.T) {
 	now := time.Unix(0, 0)
-	for _, p := range []page{pageClock, pageSettings, pageUpdate, pageTrial, pageMessage} {
+	for _, p := range []page{pageClock, pageSettings, pageUpdate, pageTrial, pageMessage, pageTimeSettings, pageSetTime, pageSetDate} {
 		d, ref := &memoryDisplay{}, &memoryDisplay{}
 		u := watchUI{page: p, holding: true, holdStep: 12, message: "Charge to at least 20 percent first."}
 		draw := func(c canvas) { u.drawFrame(c, now, powerStatus{Percent: 68, State: chargeCharging}) }
@@ -101,6 +103,26 @@ func TestHoldFeedbackOnlyTransfersButtonStrips(t *testing.T) {
 	}
 	if d.writes < 1 || d.writes > 4 {
 		t.Fatalf("hold feedback redrew %d strips", d.writes)
+	}
+}
+
+func TestAntialiasedShapesAcrossStripBoundaries(t *testing.T) {
+	draw := func(c canvas) {
+		gfx.FillBox(c, 0, 0, 240, 240, card)
+		gfx.RoundBox(c, 12, 7, 216, 97, 18, accent)
+		gfx.Line(c, -10, 15, 250, 213, white)
+		gfx.Circle(c, 120, 120, 63, warning)
+		gfx.FillCircle(c, 120, 190, 33, gfx.Coverage(white, 128))
+	}
+	d, ref := &memoryDisplay{}, &memoryDisplay{}
+	ref.FillScreen(black)
+	draw(ref)
+	var r frameRenderer
+	if err := r.render(d, draw); err != nil {
+		t.Fatal(err)
+	}
+	if d.pixels != ref.pixels {
+		t.Fatal("strip boundary changed antialiased geometry")
 	}
 }
 

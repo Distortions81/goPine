@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Distortions81/goPine/internal/gfx"
+	"github.com/Distortions81/goPine/internal/uifont"
 	"tinygo.org/x/tinyfont"
-	"tinygo.org/x/tinyfont/freesans"
 )
 
 type page uint8
@@ -18,6 +19,9 @@ const (
 	pageUpdate
 	pageTrial
 	pageMessage
+	pageTimeSettings
+	pageSetTime
+	pageSetDate
 )
 
 type uiAction uint8
@@ -35,14 +39,17 @@ type watchUI struct {
 	page      page
 	expires   time.Time
 	message   string
-	use24     bool // Session preference; no flash writes for a display setting.
+	use24     bool // Saved only with a planned-reboot clock handoff.
 	holding   bool
 	holdSince time.Time
 	holdStep  int
+	clock     watchClock
+	edit      clockEdit
 }
 
 func newWatchUI(state updateState) watchUI {
 	u := watchUI{}
+	u.clock.approximate = true
 	u.home(state)
 	return u
 }
@@ -64,7 +71,11 @@ func (u *watchUI) showMessage(message string) {
 
 func (u *watchUI) back(state updateState) {
 	u.cancelHold()
-	if (u.page == pageUpdate || u.page == pageMessage) && state == firmwareConfirmed {
+	if u.page == pageSetTime || u.page == pageSetDate {
+		u.page = pageTimeSettings
+	} else if u.page == pageTimeSettings {
+		u.page = pageSettings
+	} else if (u.page == pageUpdate || u.page == pageMessage) && state == firmwareConfirmed {
 		u.page = pageSettings
 	} else {
 		u.home(state)
@@ -74,6 +85,9 @@ func (u *watchUI) back(state updateState) {
 func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power powerStatus) uiAction {
 	if e.Kind == inputWake || e.Kind == inputSleep || e.Kind == inputCancel {
 		u.cancelHold()
+		if e.Kind == inputSleep && (u.page == pageSetTime || u.page == pageSetDate) {
+			u.page = pageTimeSettings // Sleeping discards an unfinished edit.
+		}
 		return actionNone
 	}
 	if u.page == pageUpdate && !now.Before(u.expires) {
@@ -122,9 +136,11 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 		return actionNone
 	}
 	switch u.page {
+	case pageTimeSettings, pageSetTime, pageSetDate:
+		u.handleClockTap(e, now)
 	case pageSettings:
 		if inRect(e, 16, 52, 224, 108) {
-			u.use24 = !u.use24
+			u.page = pageTimeSettings
 		} else if inRect(e, 16, 120, 224, 168) {
 			switch state {
 			case firmwareUnavailable:
@@ -171,10 +187,10 @@ func inRect(e inputEvent, left, top, right, bottom int16) bool {
 var (
 	white    = color.RGBA{238, 244, 250, 255}
 	muted    = color.RGBA{153, 170, 187, 255}
-	black    = color.RGBA{17, 22, 29, 255}
-	card     = color.RGBA{34, 43, 56, 255}
+	black    = color.RGBA{0, 0, 0, 255}
+	card     = color.RGBA{17, 17, 17, 255}
 	accent   = color.RGBA{68, 221, 170, 255}
-	positive = color.RGBA{24, 85, 68, 255}
+	positive = color.RGBA{0, 51, 34, 255}
 )
 
 func centered(d canvas, font tinyfont.Fonter, y int16, text string, c color.RGBA) {
@@ -188,18 +204,18 @@ func drawButton(d canvas, x, width int16, label string, confirm bool) {
 	if confirm {
 		c = positive
 	}
-	_ = d.FillRectangle(x, 174, width, 44, c)
-	w, _ := tinyfont.LineWidth(&freesans.Bold9pt7b, label)
-	tinyfont.WriteLine(d, &freesans.Bold9pt7b, x+width/2-int16(w)/2, 202, label, white)
+	gfx.RoundBox(d, x, 174, width, 44, 6, c)
+	w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
+	tinyfont.WriteLine(d, &uifont.Bold18, x+width/2-int16(w)/2, 202, label, white)
 }
 
 func drawLines(d canvas, text string) {
-	line, y := "", int16(96)
+	line, y := "", int16(92)
 	for _, word := range strings.Fields(text) {
-		width, _ := tinyfont.LineWidth(&freesans.Bold9pt7b, line+" "+word)
+		width, _ := tinyfont.LineWidth(&uifont.Regular18, line+" "+word)
 		if width > 208 && line != "" {
-			centered(d, &freesans.Bold9pt7b, y, line, muted)
-			y += 17
+			centered(d, &uifont.Regular18, y, line, muted)
+			y += 21
 			line = ""
 		}
 		if line != "" {
@@ -208,7 +224,7 @@ func drawLines(d canvas, text string) {
 		line += word
 	}
 	if line != "" {
-		centered(d, &freesans.Bold9pt7b, y, line, muted)
+		centered(d, &uifont.Regular18, y, line, muted)
 	}
 }
 
@@ -221,50 +237,54 @@ func (u *watchUI) timeLabel(now time.Time) string {
 
 func (u *watchUI) draw(d canvas, now time.Time) {
 	if u.page == pageClock {
-		tinyfont.WriteLine(d, &freesans.Bold9pt7b, 18, 31, "goPine", accent)
-		drawLargeTime(d, u.timeLabel(now))
+		now = u.clock.Now(now)
+		tinyfont.WriteLine(d, &uifont.Bold18, 18, 31, "goPine", accent)
+		meridiem := ""
 		if !u.use24 {
-			centered(d, &freesans.Regular9pt7b, 156, formatMeridiem(now), muted)
+			meridiem = formatMeridiem(now)
 		}
-		centered(d, &freesans.Regular9pt7b, 233, "Swipe left for settings", muted)
+		drawLargeTime(d, u.timeLabel(now), meridiem)
+		if u.clock.approximate {
+			centered(d, &tinyfont.Picopixel, 174, "TIME / DATE NEED SYNC", warning)
+		}
 		return
 	}
 	if u.page != pageTrial {
-		tinyfont.WriteLine(d, &freesans.Bold12pt7b, 16, 30, "<", accent)
+		gfx.Line(d, 25, 16, 16, 24, accent)
+		gfx.Line(d, 16, 24, 25, 32, accent)
+	}
+	if u.page == pageTimeSettings || u.page == pageSetTime || u.page == pageSetDate {
+		u.drawClockSettings(d, now)
+		return
 	}
 	if u.page == pageSettings {
-		centered(d, &freesans.Bold9pt7b, 29, "SETTINGS", white)
-		_ = d.FillRectangle(16, 52, 208, 56, card)
-		tinyfont.WriteLine(d, &tinyfont.Picopixel, 28, 68, "TIME FORMAT", muted)
-		label := "12 HOUR   AM / PM"
-		if u.use24 {
-			label = "24 HOUR"
-		}
-		tinyfont.WriteLine(d, &freesans.Bold9pt7b, 28, 92, label, white)
-		_ = d.FillRectangle(16, 120, 208, 48, card)
-		centered(d, &freesans.Bold9pt7b, 150, "FIRMWARE UPDATE", accent)
+		centered(d, &uifont.Bold18, 29, "SETTINGS", white)
+		gfx.RoundBox(d, 16, 52, 208, 56, 6, card)
+		centered(d, &uifont.Bold18, 86, "TIME & DATE", white)
+		gfx.RoundBox(d, 16, 120, 208, 48, 6, card)
+		centered(d, &uifont.Bold18, 150, "FIRMWARE UPDATE", accent)
 		drawButton(d, 40, 160, "BACK", false)
 		return
 	}
 	centered(d, &tinyfont.Picopixel, 25, "goPine "+firmwareVersion, muted)
 	switch u.page {
 	case pageUpdate:
-		centered(d, &freesans.Bold12pt7b, 64, "Bluetooth OTA", white)
-		drawLines(d, "Restarts into Bluetooth recovery. Blue exit needs an intact backup.")
+		centered(d, &uifont.Bold24, 64, "Bluetooth OTA", white)
+		drawLines(d, "Restarts into recovery. Blue exit needs an intact backup.")
 		centered(d, &tinyfont.Picopixel, 159, "UNSIGNED UPDATE / SWIPE RIGHT TO CANCEL", muted)
 		label := "HOLD 3 SECONDS"
 		if u.holding {
 			label = fmt.Sprintf("HOLD %d.%ds", (30-u.holdStep)/10, (30-u.holdStep)%10)
 		}
 		drawButton(d, 24, 192, label, true)
-		_ = d.FillRectangle(24, 214, int16(u.holdStep)*192/30, 4, accent)
+		gfx.FillBox(d, 30, 210, int16(u.holdStep)*180/30, 3, accent)
 	case pageTrial:
-		centered(d, &freesans.Bold12pt7b, 64, "Keep this build?", white)
+		centered(d, &uifont.Bold24, 64, "Keep this build?", white)
 		drawLines(d, "Test touch and time. Revert restarts into the fallback image.")
 		drawButton(d, 12, 102, "REVERT", false)
 		drawButton(d, 126, 102, "KEEP", true)
 	case pageMessage:
-		centered(d, &freesans.Bold12pt7b, 64, "Firmware update", white)
+		centered(d, &uifont.Bold24, 64, "Firmware update", white)
 		drawLines(d, u.message)
 		drawButton(d, 40, 160, "BACK", false)
 	}

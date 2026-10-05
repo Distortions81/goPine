@@ -148,6 +148,8 @@ func TestSettingsTimeFormatAndKeepLanding(t *testing.T) {
 	}
 	u.handle(inputEvent{Kind: inputSwipeLeft}, now, firmwareConfirmed, powerStatus{})
 	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 80}, now, firmwareConfirmed, powerStatus{})
+	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 180}, now, firmwareConfirmed, powerStatus{})
+	u.handle(inputEvent{Kind: inputSwipeRight}, now, firmwareConfirmed, powerStatus{})
 	u.handle(inputEvent{Kind: inputSwipeRight}, now, firmwareConfirmed, powerStatus{})
 	if u.page != pageClock || !u.use24 || u.timeLabel(now) != "23:05" {
 		t.Fatal("format choice lost on back")

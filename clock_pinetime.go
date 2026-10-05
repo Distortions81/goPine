@@ -13,13 +13,12 @@ func initializeClock() error {
 		return nil
 	}
 
-	seconds, err := parseClockTime(firmwareTime)
+	target, err := buildClockTime(firmwareDate, firmwareTime)
 	if err != nil {
 		return fmt.Errorf("parse firmware time: %w", err)
 	}
 
 	now := time.Now()
-	target := time.Unix(seconds, 0)
 	runtime.AdjustTimeOffset(target.UnixNano() - now.UnixNano())
 	return nil
 }

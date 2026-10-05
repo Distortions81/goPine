@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"tinygo.org/x/tinyfont/freesans"
+	"github.com/Distortions81/goPine/internal/uifont"
 )
 
 func main() {
@@ -25,6 +25,11 @@ func run() error {
 	defer display.Close()
 
 	ui := newWatchUI(firmwareState())
+	persistence := restoreClock(&ui, time.Now())
+	beforeReset := func() {
+		// Best effort: clock storage failure must not prevent OTA or rollback.
+		persistence.beforeReset(&ui, time.Now(), updatePowerOK(display.PowerStatus()))
+	}
 	var renderer frameRenderer
 	progress := func(title string) func(int) {
 		last := -1
@@ -34,9 +39,9 @@ func run() error {
 			}
 			last = percent / 5
 			_ = renderer.render(display, func(c canvas) {
-				centered(c, &freesans.Bold9pt7b, 65, title, white)
-				centered(c, &freesans.Bold24pt7b, 130, fmt.Sprintf("%d%%", percent), accent)
-				centered(c, &freesans.Bold9pt7b, 175, "Keep power connected", muted)
+				centered(c, &uifont.Bold18, 65, title, white)
+				centered(c, &uifont.Bold24, 130, fmt.Sprintf("%d%%", percent), accent)
+				centered(c, &uifont.Bold18, 175, "Keep power connected", muted)
 			})
 		}
 	}
@@ -68,7 +73,7 @@ func run() error {
 			previous, painted = key, true
 		}
 
-		delay := min(nextMinuteDelay(now), time.Until(nextPower))
+		delay := min(nextMinuteDelay(ui.clock.Now(now)), time.Until(nextPower))
 		if ui.page == pageUpdate {
 			delay = min(delay, time.Until(ui.expires))
 		}
@@ -94,14 +99,14 @@ func run() error {
 				ui.home(firmwareState())
 			}
 		case actionRevert:
-			if err := revertFirmware(); err != nil {
+			if err := revertFirmware(beforeReset); err != nil {
 				ui.showMessage(err.Error())
 			}
 		case actionStartUpdate:
 			// Recheck actual power at the flash boundary, not just cached UI data.
 			if !updatePowerOK(display.PowerStatus()) {
 				ui.showMessage("Charge to at least 20 percent first.")
-			} else if err := startFirmwareUpdate(progress("Starting updater")); err != nil {
+			} else if err := startFirmwareUpdate(progress("Starting updater"), beforeReset); err != nil {
 				ui.showMessage("Could not start updater. Check recovery with wired setup.")
 			}
 			painted = false
@@ -116,14 +121,16 @@ type frameKey struct {
 	message, clock, power string
 	use24, holding        bool
 	step                  int
+	edit                  clockEdit
+	approximate           bool
 }
 
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 	clock := ""
-	if u.page == pageClock {
-		clock = now.Format("15:04")
+	if u.page == pageClock || u.page == pageTimeSettings {
+		clock = u.clock.Now(now).Format("2006-01-02 15:04")
 	}
-	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep}
+	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep, u.edit, u.clock.approximate}
 }
 
 func formatTime(t time.Time) string {

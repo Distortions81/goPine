@@ -14,6 +14,7 @@ fi
 version=$1
 tinygo_bin=${TINYGO:-tinygo}
 firmware_time=${FIRMWARE_TIME:-$(date +%H:%M:%S)}
+firmware_date=${FIRMWARE_DATE:-$(date +%Y-%m-%d)}
 pack_args=()
 output=build/ota
 
@@ -48,14 +49,14 @@ if $bootstrap; then
   # First run this standalone helper to provision external recovery and clear
   # stale pending updates. Only then install the bootloader+app HEX below.
   "$tinygo_bin" build -target=./targets/pinetime-gopine.json -tags=provision \
-    -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareVersion=$version" \
+    -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareDate=$firmware_date -X main.firmwareVersion=$version" \
     -o "$output/gopine-recovery-setup-$version.elf" .
   "$tinygo_bin" build -target=./targets/pinetime-gopine.json -tags=provision \
-    -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareVersion=$version" \
+    -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareDate=$firmware_date -X main.firmwareVersion=$version" \
     -o "$output/gopine-recovery-setup-$version.hex" .
 fi
 "$tinygo_bin" build -target=./targets/pinetime-mcuboot.json \
-  -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareVersion=$version" \
+  -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareDate=$firmware_date -X main.firmwareVersion=$version" \
   -o "$output/gopine-$version.elf" .
 go run ./cmd/otapack -elf "$output/gopine-$version.elf" -version "$version" \
   -out "$output" "${pack_args[@]}"

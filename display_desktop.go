@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/Distortions81/goPine/internal/gfx"
 	"github.com/veandco/go-sdl2/sdl"
 	"tinygo.org/x/drivers/pixel"
 )
@@ -60,6 +61,9 @@ func (d *desktopDisplay) SetPixel(x, y int16, c color.RGBA) {
 	if x < 0 || y < 0 || int32(x) >= d.surface.W || int32(y) >= d.surface.H {
 		return
 	}
+	if c.A != 255 {
+		c = gfx.Over(color.RGBAModel.Convert(d.surface.At(int(x), int(y))).(color.RGBA), c)
+	}
 	d.surface.Set(int(x), int(y), c)
 }
 
@@ -69,6 +73,14 @@ func (d *desktopDisplay) FillScreen(c color.RGBA) {
 }
 
 func (d *desktopDisplay) FillRectangle(x, y, width, height int16, c color.RGBA) error {
+	if c.A != 255 {
+		for yy := y; yy < y+height; yy++ {
+			for xx := x; xx < x+width; xx++ {
+				d.SetPixel(xx, yy, c)
+			}
+		}
+		return nil
+	}
 	return d.surface.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(width), H: int32(height)}, sdl.MapRGBA(d.surface.Format, c.R, c.G, c.B, c.A))
 }
 

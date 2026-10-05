@@ -53,18 +53,19 @@ func keepFirmware() error {
 	return nil
 }
 
-func revertFirmware() error {
+func revertFirmware(beforeReset func()) error {
 	if firmwareState() != firmwareTrial {
 		return errors.New("no trial to revert")
 	}
 	if err := wakeFlash(); err != nil {
 		return err
 	}
+	beforeReset()
 	arm.SystemReset()
 	return nil
 }
 
-func startFirmwareUpdate(progress func(int)) error {
+func startFirmwareUpdate(progress func(int), beforeReset func()) error {
 	if firmwareState() != firmwareConfirmed {
 		return errors.New("keep or revert this update first")
 	}
@@ -77,6 +78,8 @@ func startFirmwareUpdate(progress func(int)) error {
 		return err
 	}
 	// Leave external flash awake for MCUboot's slot swap.
+	// Snapshot only AFTER staging, immediately before the actual reset.
+	beforeReset()
 	arm.SystemReset()
 	return nil
 }

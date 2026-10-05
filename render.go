@@ -4,6 +4,7 @@ import (
 	"hash/crc32"
 	"image/color"
 
+	"github.com/Distortions81/goPine/internal/gfx"
 	"tinygo.org/x/drivers/pixel"
 )
 
@@ -50,8 +51,17 @@ func (r *frameRenderer) render(d clockDisplay, draw func(canvas)) error {
 
 func (s *stripCanvas) Size() (int16, int16) { return 240, 240 }
 func (s *stripCanvas) Display() error       { return nil }
+func (s *stripCanvas) ClipBounds() (int, int, int, int) {
+	return 0, int(s.y), 240, int(s.y) + stripHeight
+}
 func (s *stripCanvas) SetPixel(x, y int16, c color.RGBA) {
 	if x >= 0 && x < 240 && y >= s.y && y < s.y+stripHeight {
+		if c.A == 0 {
+			return
+		}
+		if c.A != 255 {
+			c = gfx.Over(s.bitmap.Get(int(x), int(y-s.y)).RGBA(), c)
+		}
 		s.bitmap.Set(int(x), int(y-s.y), pixel.NewColor[pixel.RGB444BE](c.R, c.G, c.B))
 	}
 }
@@ -62,7 +72,11 @@ func (s *stripCanvas) FillRectangle(x, y, width, height int16, c color.RGBA) err
 	value := pixel.NewColor[pixel.RGB444BE](c.R, c.G, c.B)
 	for yy := max(y, s.y); yy < min(y+height, s.y+stripHeight); yy++ {
 		for xx := max(x, 0); xx < min(x+width, 240); xx++ {
-			s.bitmap.Set(int(xx), int(yy-s.y), value)
+			if c.A == 255 {
+				s.bitmap.Set(int(xx), int(yy-s.y), value)
+			} else {
+				s.SetPixel(xx, yy, c)
+			}
 		}
 	}
 	return nil

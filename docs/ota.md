@@ -10,7 +10,7 @@ need hardware verification.
 
 ## Normal update
 
-1. Build `bash scripts/build-ota.sh 0.2.3` (or your chosen version).
+1. Build `bash scripts/build-ota.sh 0.2.4` (or your chosen version).
 2. On a confirmed goPine build, swipe left to **Settings**, tap **Firmware
    Update**, then hold **HOLD 3 SECONDS** continuously until the countdown finishes.
    The prompt expires after 30 seconds. Releasing early or dragging away cancels
@@ -21,7 +21,7 @@ need hardware verification.
 3. goPine verifies the factory recovery image, stages it, and reboots through
    MCUboot into recovery. Wait for the InfiniTime recovery screen.
 4. Connect a compatible PineTime updater and send
-   `build/ota/gopine-dfu-0.2.3.zip`. Use its **firmware/Legacy DFU** workflow, not
+   `build/ota/gopine-dfu-0.2.4.zip`. Use its **firmware/Legacy DFU** workflow, not
    resource upload or Nordic Secure DFU. See upstream instructions for
    [Gadgetbridge](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/doc/gettingStarted/ota-gadgetbridge.md)
    or [nRF Connect](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/doc/gettingStarted/ota-nrfconnect.md).
@@ -48,7 +48,10 @@ requirement of the OTA file format.
 
 goPine itself does not advertise Bluetooth. After entering recovery, reconnect
 to the device advertised by InfiniTime. Companion-app time sync and notifications
-are not yet implemented in goPine. Reboots still reset the clock to build time.
+are not yet implemented in goPine. The pending 0.2.4 build adds a one-shot
+planned-reset clock handoff; unexpected resets still use build time. Both the
+departing and arriving goPine versions must support it, so the first upgrade
+from 0.2.3 cannot preserve time this way. See [time notes](time.md).
 
 ## One-time wired setup (standalone goPine to MCUboot)
 
@@ -140,6 +143,8 @@ avoid the old DFU receiver's exact-200-byte final-buffer edge case.
 | Primary image / executable vectors | Internal `0x8000` / `0x8020` |
 | Primary slot size / confirm flag | `0x74000` bytes / internal `0x7bfe8` |
 | Swap scratch | Internal `0x7c000..0x7cfff` |
+| Spare (untouched) | Internal `0x7d000..0x7dfff` |
+| goPine planned-reset clock journal (pending 0.2.4) | Internal `0x7e000..0x7ffff` |
 | Factory recovery | External `0x00000..0x3ffff` |
 | Secondary image | External `0x40000..0xb3fff` |
 | Existing filesystem (untouched) | External `0xb4000..0x3fffff` |
@@ -249,3 +254,40 @@ dragging away, sleep/wake, repeated KEEP taps, and persistence after KEEP and
 reboot. The bootloader and recovery images are unchanged; a reliable blue-menu
 exit from recovery still needs a controlled test before any upload/red recovery
 overwrites the rollback copy. This UI revision does not resolve that question.
+
+## Antialiased rendering revision (0.2.4)
+
+This revision adds native-size, four-bit antialiased text, a true-black
+background, dark-charcoal cards, and small drawing helpers for antialiased
+circles, diagonal lines, and rounded corners. Straight box edges stay crisp.
+Coverage blends against the destination rather than assuming a white
+background. The clock removes the power-status card and swipe hint, and places
+a small AM/PM beside the digits on the same baseline. Swipe-left still opens
+Settings. Small Picopixel metadata remains pixel-aligned. The existing
+5,760-byte strip buffer and changed-strip transfer skipping are unchanged.
+
+Settings now has a Time & Date submenu with manual hour/minute and date editors,
+Save/Cancel, and the 12/24-hour preference. Sleep discards unfinished edits.
+Civil time uses an application offset, leaving runtime deadlines unchanged.
+The OTA build seeds both local date and time. A planned OTA/revert reset now
+hands off the date/hour through a compact flash journal and seconds within that
+hour through the two retention registers. The snapshot is taken after staging,
+just before reset; identical hour/format anchors reuse their existing record.
+There are no periodic flash writes. The next goPine boot consumes the handoff
+once and marks restored time approximate. Bootloader/recovery time is not
+counted, and arbitrary other firmware is not expected to preserve this format.
+Cold starts and unexpected resets fall back to the build seed. This handoff is
+not hardware-validated yet. Bluetooth time synchronization is still a separate
+follow-up. See [time notes](time.md).
+
+Font tables are generated ahead of time from DejaVu Sans and stored as immutable
+strings in flash; ordinary builds need neither Python nor font files. See
+`internal/uifont/README.md` for regeneration and the font license. No new Go
+dependency, bootloader change, or recovery change is introduced.
+
+Host tests cover coverage blending, geometry clipping and symmetry, glyph data,
+and pixel equivalence across strip boundaries. Standalone, provisioning, and
+MCUboot builds are checked; actual redraw speed, edge appearance, and touch
+responsiveness still require watch testing. Build a fresh time-seeded package
+with `bash scripts/build-ota.sh 0.2.4` before uploading. This revision has not
+been installed on the watch yet.

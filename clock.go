@@ -20,12 +20,14 @@ var firmwareDate string // Optional local YYYY-MM-DD supplied by the OTA build.
 type watchClock struct {
 	offset      time.Duration
 	approximate bool
+	initialized bool // A usable calendar exists; distinct from its precision.
 }
 
 func (c watchClock) Now(now time.Time) time.Time { return now.Add(c.offset) }
 func (c *watchClock) Set(now, target time.Time) {
 	c.offset = target.Sub(now)
 	c.approximate = false
+	c.initialized = target.Year() >= 2000 && target.Year() <= 2099
 }
 
 // Received/saved calendar fields represent local civil time, not UTC instants.

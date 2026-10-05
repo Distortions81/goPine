@@ -72,5 +72,10 @@ fi
 "$tinygo_bin" build -target="$target" \
   -ldflags="-X main.firmwareTime=$firmware_time -X main.firmwareDate=$firmware_date -X main.firmwareVersion=$version" \
   -o "$output/gopine-$version.elf" .
+if [[ $target == *-ble.json ]]; then
+  # A successful link does not bound TinyGo's indirect/recursive task stack.
+  python3 scripts/check-resources.py "$output/gopine-$version.elf" \
+    --report "$output/gopine-resources-$version.json"
+fi
 go run ./cmd/otapack -elf "$output/gopine-$version.elf" -version "$version" \
   -out "$output" "${pack_args[@]}"

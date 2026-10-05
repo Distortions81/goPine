@@ -21,6 +21,9 @@ func (d *memoryDisplay) Display() error                         { return nil }
 func (d *memoryDisplay) PowerStatus() powerStatus               { return powerStatus{} }
 func (d *memoryDisplay) Wait(time.Duration) (inputEvent, error) { return inputEvent{}, nil }
 func (d *memoryDisplay) Close() error                           { return nil }
+func (d *memoryDisplay) Wake() error                            { return nil }
+func (d *memoryDisplay) KeepAwake()                             {}
+func (d *memoryDisplay) SetVibration(bool)                      {}
 func (d *memoryDisplay) SetPixel(x, y int16, c color.RGBA) {
 	d.singles++
 	if x >= 0 && x < 240 && y >= 0 && y < 240 {
@@ -53,9 +56,9 @@ func (d *memoryDisplay) DrawBitmap(x, y int16, b pixel.Image[pixel.RGB444BE]) er
 
 func TestStripRendererMatchesDirectPixelsAndSkipsUnchanged(t *testing.T) {
 	now := time.Unix(0, 0)
-	for _, p := range []page{pageClock, pageSettings, pageUpdate, pageTrial, pageMessage, pageTimeSettings, pageSetTime, pageSetDate} {
+	for _, p := range []page{pageClock, pageSettings, pageUpdate, pageTrial, pageMessage, pageTimeSettings, pageSetTime, pageSetDate, pageApps, pageAlarms, pageAlarmEdit, pageAlarmRepeat, pageStopwatch, pageCountdown, pageCountdownEdit, pageAlert} {
 		d, ref := &memoryDisplay{}, &memoryDisplay{}
-		u := watchUI{page: p, holding: true, holdStep: 12, message: "Charge to at least 20 percent first."}
+		u := watchUI{page: p, holding: true, holdStep: 12, message: "Charge to at least 20 percent first.", timers: newTimerState(), edit: clockEdit{hour: 23, minute: 59, day: 59}}
 		draw := func(c canvas) { u.drawFrame(c, now, powerStatus{Percent: 68, State: chargeCharging}) }
 		ref.FillScreen(black)
 		draw(ref)

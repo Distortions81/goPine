@@ -9,7 +9,7 @@ import (
 )
 
 type timeRadio interface {
-	Start([10]byte) error
+	Start([10]byte, uint8) error
 	Stop()
 	Service()
 	Take() ([10]byte, int, time.Duration, error)
@@ -36,7 +36,7 @@ func (c *timeSyncController) close() {
 	}
 }
 
-func (c *timeSyncController) update(u *watchUI, now time.Time) {
+func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
 	if u.page != pageTimeSync {
 		u.sync.Cancel()
 		c.close()
@@ -55,7 +55,7 @@ func (c *timeSyncController) update(u *watchUI, now time.Time) {
 		if err != nil {
 			value = [10]byte{}
 		}
-		err = c.radio.Start(value)
+		err = c.radio.Start(value, battery)
 		if err != nil {
 			c.radio.Stop()
 			u.sync.Cancel()
@@ -122,8 +122,8 @@ func (u *watchUI) drawTimeSync(d canvas, now time.Time) {
 		centered(d, &uifont.Regular18, 166, "Check before accepting", muted)
 		clockControl(d, 126, 188, 102, 44, "ACCEPT", positive)
 	} else if u.sync.Open {
-		centered(d, &uifont.Regular18, 64, "Open InfiniLink app", white)
-		centered(d, &uifont.Regular18, 91, "on your iPhone", muted)
+		centered(d, &uifont.Regular18, 64, "InfiniLink Developer", white)
+		centered(d, &uifont.Regular18, 91, "Force ANCS: OFF", accent)
 		centered(d, &uifont.Regular18, 121, "Connect to InfiniTime", white)
 		centered(d, &uifont.Regular18, 150, "Then confirm here", muted)
 		seconds := max(0, int((u.sync.Expires.Sub(now)+time.Second-1)/time.Second))

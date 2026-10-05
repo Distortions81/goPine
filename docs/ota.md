@@ -47,12 +47,17 @@ a tested cancellation path in this workflow and cannot restore an image whose
 slot has already been overwritten. This is a prototype UX limitation, not a
 requirement of the OTA file format.
 
-goPine itself does not advertise Bluetooth. After entering recovery, reconnect
-to the device advertised by InfiniTime. Companion-app time sync and notifications
-are not yet implemented in goPine. Version 0.2.4 adds a one-shot
+The ordinary build does not advertise Bluetooth. The opt-in BLE candidate
+advertises only during an explicit Sync Time window; firmware uploads still
+require entering recovery and reconnecting to the device advertised by InfiniTime.
+Notifications and a persistent companion connection are not implemented.
+Version 0.2.4 adds a one-shot
 planned-reset clock handoff; unexpected resets still use build time. Both the
 departing and arriving goPine versions must support it, so the first upgrade
 from 0.2.3 cannot preserve time this way. See [time notes](time.md).
+Version 0.3.0 also persists clock tools and settings, migrating the old clock
+journal on its first save. Downgrading to an earlier version cannot read that
+new journal. See [clock tools and persistence](timers.md).
 
 ## One-time wired setup (standalone goPine to MCUboot)
 
@@ -338,3 +343,25 @@ and a short hold/release. This is a successful on-watch smoke test, not a
 separately recorded result for every gesture. Deliberate full-hold recovery
 re-entry, movement cancellation, and planned-reset clock retention still need
 dedicated checks. The bootloader and recovery images were not changed.
+
+Later on 2026-10-05, the host sent the 325,724-byte 0.3.0 BLE candidate through
+the same recovery-based Legacy DFU flow using USB adapter hci1. All bytes were
+acknowledged in 3 minutes 39 seconds, and the receiver reported successful
+firmware validation. The activation/reset command was sent, but the connection
+dropped before its write acknowledgement; no transfer retry was attempted.
+The user subsequently reported the InfiniTime screen and no observed goPine
+confirmation screen. Successful boot/KEEP is therefore not established; the
+0.3.0 candidate must not be treated as hardware-validated. Resource inspection
+found an insufficient task-stack budget (see [timers](timers.md)). No second
+upload was attempted. This upload did not replace the bootloader or the stored
+recovery image.
+
+The subsequent 0.3.1 retry on 2026-10-05 sent all 313,124 bytes through hci1
+in 3 minutes 34 seconds. The receiver reported successful firmware validation,
+and the activation/reset command was sent. The sender then timed out waiting
+for the activation write acknowledgement, with a GATT invalid-file-descriptor
+warning. No automatic retry was attempted. The user subsequently confirmed
+pressing KEEP in goPine and reported that a short countdown woke the sleeping
+watch and vibrated. This establishes a successful boot/KEEP and countdown
+smoke test, not complete clock-tool validation. This application upload did not
+replace the bootloader or recovery image.

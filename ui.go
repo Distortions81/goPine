@@ -24,6 +24,14 @@ const (
 	pageSetTime
 	pageSetDate
 	pageTimeSync
+	pageApps
+	pageAlarms
+	pageAlarmEdit
+	pageAlarmRepeat
+	pageStopwatch
+	pageCountdown
+	pageCountdownEdit
+	pageAlert
 )
 
 type uiAction uint8
@@ -38,22 +46,27 @@ const (
 const updateHoldDuration = 3 * time.Second
 
 type watchUI struct {
-	page       page
-	expires    time.Time
-	message    string
-	use24      bool // Saved only with a planned-reboot clock handoff.
-	holding    bool
-	holdSince  time.Time
-	holdStep   int
-	clock      watchClock
-	edit       clockEdit
-	sync       timesync.Session
-	syncStatus string
+	page         page
+	expires      time.Time
+	message      string
+	use24        bool
+	holding      bool
+	holdSince    time.Time
+	holdStep     int
+	clock        watchClock
+	edit         clockEdit
+	sync         timesync.Session
+	syncStatus   string
+	timers       timerState
+	alarmIndex   int
+	editRepeat   alarmRepeat
+	settingsNote string
 }
 
 func newWatchUI(state updateState) watchUI {
-	u := watchUI{}
+	u := watchUI{timers: newTimerState()}
 	u.clock.approximate = true
+	u.clock.initialized = initialClockInitialized()
 	u.home(state)
 	return u
 }
@@ -75,7 +88,13 @@ func (u *watchUI) showMessage(message string) {
 
 func (u *watchUI) back(state updateState) {
 	u.cancelHold()
-	if u.page == pageSetTime || u.page == pageSetDate {
+	if u.page == pageAlarmEdit || u.page == pageAlarmRepeat {
+		u.page = pageAlarms
+	} else if u.page == pageCountdownEdit {
+		u.page = pageCountdown
+	} else if u.page == pageAlarms || u.page == pageStopwatch || u.page == pageCountdown {
+		u.page = pageApps
+	} else if u.page == pageSetTime || u.page == pageSetDate {
 		u.page = pageTimeSettings
 	} else if u.page == pageTimeSettings {
 		u.page = pageSettings
@@ -86,7 +105,18 @@ func (u *watchUI) back(state updateState) {
 	}
 }
 
+// Editor temporaries must not enlarge the event loop's permanent stack frame.
+//
+//go:noinline
 func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power powerStatus) uiAction {
+	if u.page == pageAlert {
+		snooze := e.Kind == inputTap && inRect(e, 16, 144, 224, 188) && u.timers.source < alarmCount
+		if snooze || e.Kind == inputSleep || e.Kind == inputSwipeRight ||
+			(e.Kind == inputTap && inRect(e, 16, 192, 224, 236)) {
+			u.dismissAlert(now, snooze, state)
+		}
+		return actionNone
+	}
 	if u.page == pageTimeSync {
 		u.handleTimeSync(e, now)
 		return actionNone
@@ -96,10 +126,17 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 		if e.Kind == inputSleep && (u.page == pageSetTime || u.page == pageSetDate) {
 			u.page = pageTimeSettings // Sleeping discards an unfinished edit.
 		}
+		if e.Kind == inputSleep && (u.page == pageAlarmEdit || u.page == pageAlarmRepeat || u.page == pageCountdownEdit) {
+			u.back(state)
+		}
 		return actionNone
 	}
 	if u.page == pageUpdate && !now.Before(u.expires) {
 		u.back(state)
+		return actionNone
+	}
+	if e.Kind == inputSwipeRight && u.page == pageClock && state != firmwareTrial {
+		u.page = pageApps
 		return actionNone
 	}
 	if e.Kind == inputSwipeRight && u.page != pageTrial {
@@ -129,7 +166,7 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 			held := min(e.Held, now.Sub(u.holdSince))
 			u.holdStep = int(min(held, updateHoldDuration) / (100 * time.Millisecond))
 			if held >= updateHoldDuration {
-				u.showMessage("Starting Bluetooth recovery. Keep power connected.")
+				u.showMessage("Starting updater. Keep power connected.")
 				return actionStartUpdate
 			}
 		} else if e.Kind == inputRelease || e.Kind == inputTap || e.Kind == inputSwipeLeft {
@@ -144,8 +181,10 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 		return actionNone
 	}
 	switch u.page {
-	case pageTimeSettings, pageSetTime, pageSetDate:
+	case pageTimeSettings, pageSetTime, pageSetDate, pageAlarmEdit:
 		u.handleClockTap(e, now)
+	case pageApps, pageAlarms, pageAlarmRepeat, pageStopwatch, pageCountdown, pageCountdownEdit:
+		u.handleTimerTap(e, now)
 	case pageSettings:
 		if inRect(e, 16, 52, 224, 108) {
 			u.page = pageTimeSettings
@@ -256,17 +295,21 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 			meridiem = formatMeridiem(now)
 		}
 		drawLargeTime(d, u.timeLabel(now), meridiem)
-		if u.clock.approximate {
-			centered(d, &tinyfont.Picopixel, 174, "TIME / DATE NEED SYNC", warning)
+		if !u.clock.initialized || u.clock.approximate {
+			centered(d, &uifont.Regular18, 181, "Set or sync time", warning)
 		}
 		return
 	}
-	if u.page != pageTrial {
+	if u.page != pageTrial && u.page != pageAlert {
 		gfx.Line(d, 25, 16, 16, 24, accent)
 		gfx.Line(d, 16, 24, 25, 32, accent)
 	}
-	if u.page == pageTimeSettings || u.page == pageSetTime || u.page == pageSetDate {
+	if u.page == pageTimeSettings || u.page == pageSetTime || u.page == pageSetDate || u.page == pageAlarmEdit {
 		u.drawClockSettings(d, now)
+		return
+	}
+	if u.page >= pageApps {
+		u.drawTimers(d, now)
 		return
 	}
 	if u.page == pageSettings {
@@ -278,12 +321,12 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		drawButton(d, 40, 160, "BACK", false)
 		return
 	}
-	centered(d, &tinyfont.Picopixel, 25, "goPine "+firmwareVersion, muted)
+	centered(d, &uifont.Regular18, 29, "goPine "+firmwareVersion, muted)
 	switch u.page {
 	case pageUpdate:
-		centered(d, &uifont.Bold24, 64, "Bluetooth OTA", white)
-		drawLines(d, "Restarts into recovery. Blue exit needs an intact backup.")
-		centered(d, &tinyfont.Picopixel, 159, "UNSIGNED UPDATE / SWIPE RIGHT TO CANCEL", muted)
+		centered(d, &uifont.Bold24, 64, "Install update", white)
+		drawLines(d, "Restart into update mode.")
+		centered(d, &uifont.Regular18, 159, "Swipe back to cancel", muted)
 		label := "HOLD 3 SECONDS"
 		if u.holding {
 			label = fmt.Sprintf("HOLD %d.%ds", (30-u.holdStep)/10, (30-u.holdStep)%10)
@@ -292,7 +335,7 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		gfx.FillBox(d, 30, 210, int16(u.holdStep)*180/30, 3, accent)
 	case pageTrial:
 		centered(d, &uifont.Bold24, 64, "Keep this build?", white)
-		drawLines(d, "Test touch and time. Revert restarts into the fallback image.")
+		drawLines(d, "Keep this version or restart to go back.")
 		drawButton(d, 12, 102, "REVERT", false)
 		drawButton(d, 126, 102, "KEEP", true)
 	case pageMessage:

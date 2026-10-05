@@ -45,10 +45,14 @@ func (u *watchUI) handleClockTap(e inputEvent, now time.Time) {
 		return
 	}
 	if inRect(e, 12, 188, 114, 232) {
-		u.page = pageTimeSettings
+		u.back(firmwareConfirmed)
 		return
 	}
 	if inRect(e, 126, 188, 228, 232) {
+		if u.page == pageAlarmEdit {
+			u.page = pageAlarmRepeat
+			return
+		}
 		current := u.clock.Now(now)
 		y, m, day := current.Date()
 		hour, minute, second := current.Clock()
@@ -71,7 +75,7 @@ func (u *watchUI) handleClockTap(e inputEvent, now time.Time) {
 	if delta == 0 {
 		return
 	}
-	if u.page == pageSetTime {
+	if u.page == pageSetTime || u.page == pageAlarmEdit {
 		if e.X >= 16 && e.X < 104 {
 			u.edit.hour = (u.edit.hour + delta + 24) % 24
 		}
@@ -112,11 +116,14 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 		return
 	}
 	title := "SET TIME"
+	if u.page == pageAlarmEdit {
+		title = "SET ALARM"
+	}
 	if u.page == pageSetDate {
 		title = "SET DATE"
 	}
 	centered(d, &uifont.Bold18, 29, title, white)
-	if u.page == pageSetTime {
+	if u.page == pageSetTime || u.page == pageAlarmEdit {
 		hour := u.edit.hour
 		if !u.use24 {
 			hour %= 12
@@ -140,12 +147,9 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 				if u.edit.hour >= 12 {
 					caption = "PM"
 				}
-				w, _ = tinyfont.LineWidth(&uifont.Meridiem, caption)
-				writeLine(d, &uifont.Meridiem, x+(88-int16(w))/2, 131, caption, muted)
-			} else {
-				w, _ = tinyfont.LineWidth(&tinyfont.Picopixel, caption)
-				writeLine(d, &tinyfont.Picopixel, x+(88-int16(w))/2, 128, caption, muted)
 			}
+			w, _ = tinyfont.LineWidth(&uifont.Regular18, caption)
+			writeLine(d, &uifont.Regular18, x+(88-int16(w))/2, 132, caption, muted)
 		}
 		centered(d, &uifont.Regular18, 114, ":", muted)
 	} else {
@@ -156,11 +160,15 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			label := fmt.Sprintf("%02d", v)
 			w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
 			writeLine(d, &uifont.Bold18, x+(64-int16(w))/2, 114, label, white)
-			labels := [...]string{"YEAR", "MONTH", "DAY"}
-			w, _ = tinyfont.LineWidth(&tinyfont.Picopixel, labels[i])
-			writeLine(d, &tinyfont.Picopixel, x+(64-int16(w))/2, 128, labels[i], muted)
+			labels := [...]string{"YEAR", "MON", "DAY"}
+			w, _ = tinyfont.LineWidth(&uifont.Regular18, labels[i])
+			writeLine(d, &uifont.Regular18, x+(64-int16(w))/2, 132, labels[i], muted)
 		}
 	}
 	clockControl(d, 12, 188, 102, 44, "CANCEL", card)
-	clockControl(d, 126, 188, 102, 44, "SAVE", positive)
+	label := "SAVE"
+	if u.page == pageAlarmEdit {
+		label = "NEXT"
+	}
+	clockControl(d, 126, 188, 102, 44, label, positive)
 }

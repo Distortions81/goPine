@@ -1,9 +1,11 @@
 # Experimental PineTime time-sync radio
 
 This port is compiled only with `pinetime && bletime && !provision`.
-It provides one unauthenticated CTS connection, a bounded proposal mailbox, and
-no notifications, pairing, DFU, or always-on advertising. The watch UI alone
-opens a five-minute window. Pending writes require on-watch confirmation.
+It provides one unauthenticated CTS connection, a standard Battery Service for
+InfiniLink connection-state compatibility, a bounded proposal mailbox, and no
+ANCS, pairing, bonding, application notifications, DFU, or always-on advertising.
+The watch UI alone opens a five-minute window. Pending time writes require
+on-watch confirmation.
 
 ## Reproducible candidate build
 
@@ -16,13 +18,13 @@ git clone https://github.com/InfiniTimeOrg/InfiniTime.git build/deps/InfiniTime
 git -C build/deps/InfiniTime checkout --detach 6c119eb52206b580b556b41633dddc1e1b66a8da
 tinygo build -target=./targets/pinetime-gopine.json -o build/plain-check.elf .
 # The plain build initializes TinyGo's generated libc headers.
-INFINITIME_SOURCE=build/deps/InfiniTime bash scripts/build-ota.sh --ble 0.2.6
+INFINITIME_SOURCE=build/deps/InfiniTime bash scripts/build-ota.sh --ble 0.3.0
 ```
 
 `TINYGO=/path/to/tinygo` and `TZ=your/timezone` are supported. The script rebuilds
 the archive on every BLE package build, checks the source revision/cleanliness
 and TinyGo version, and atomically replaces the archive only on success.
-The resulting `build/ota/gopine-dfu-0.2.6.zip` is for **existing MCUboot OTA only**.
+The resulting `build/ota/gopine-dfu-0.3.0.zip` is for **existing MCUboot OTA only**.
 Never use a standalone/bootloader image for this test. The ordinary build does
 not include this experimental radio backend and will report Bluetooth unavailable.
 
@@ -75,7 +77,8 @@ Before calling this ready for normal use, test on the watch:
 
 1. No advertisement before Sync Time; matching CTS advertisement during it.
 2. PC write, visible correct proposal, no change before ACCEPT; Back rejects it.
-3. A real InfiniLink connection sends a usable time (test installed app version).
+3. With InfiniLink Developer → Force ANCS off, the app reaches Connected, reads
+   the live battery level, and sends a usable time (test installed app version).
 4. No advertisement/connection after Back, sleep, expiry, proposal or acceptance;
    check sleep current returns to baseline and repeat opening the window.
 5. Touch, clock progression and display remain responsive during BLE traffic.
@@ -85,5 +88,6 @@ The 0.2.5 advertisement was detected once on the watch; later discovery failed
 even with its countdown running. Source inspection identified the missing HFXO
 restart above. After a watch reboot, the automated PC sender delivered time
 successfully and the user confirmed the sync worked on 2026-10-05. Version
-0.2.6 includes the restart repair and longer window; repeated windows and
-InfiniLink remain unverified.
+0.2.6 includes the restart repair and longer window. The 0.2.7 candidate adds
+InfiniLink's expected Battery Service and an on-watch reminder that Force ANCS
+must be off. Repeated windows and InfiniLink remain unverified.

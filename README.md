@@ -1,6 +1,6 @@
 # goPine
 
-goPine is a simple digital clock for the PineTime smartwatch, written in Go
+goPine is a digital clock with alarms, stopwatch, and countdown for the PineTime smartwatch, written in Go
 with [TinyGo](https://tinygo.org/). It also includes an SDL2 desktop simulator
 that uses the same clock and font rendering code as the watch build.
 
@@ -15,13 +15,18 @@ go run .
 ![goPine running in the desktop simulator](gopine-simulator.png)
 
 The simulator opens a 240 by 240 window and runs the same clock application
-used by the watch build.
+used by the watch build. Space simulates the side button (sleep/wake); an alert
+wakes the window and shows vibration pulses in its title. Set
+`GOPINE_SIM_STORAGE=/path/to/watch.flash` to preserve settings and timers across
+simulator restarts. The optional file uses the watch's flash-journal format.
 
 ## Requirements
 
 - Go 1.27.1 or newer in the Go 1.27 release line
 - TinyGo 0.42.0
 - SDL2 development libraries (desktop simulator only)
+- LLVM command-line tools (`llvm-nm`, `llvm-dwarfdump`, `llvm-objdump`) for the
+  BLE build's resource-budget check
 
 On Debian or Ubuntu, install SDL2 with:
 
@@ -40,13 +45,13 @@ Build a **standalone, wired-only** image with the project's PineTime target. The
 linker value seeds the watch's low-power RTC with the current local time:
 
 ```sh
-tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" -o goPine.hex .
+tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=$(date +%H:%M:%S) -X main.firmwareDate=$(date +%Y-%m-%d)" -o goPine.hex .
 ```
 
 Flash it with the programmer configured for your PineTime development setup:
 
 ```sh
-tinygo flash -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=$(date +%H:%M:%S)" .
+tinygo flash -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=$(date +%H:%M:%S) -X main.firmwareDate=$(date +%Y-%m-%d)" .
 ```
 
 **Do not use this standalone target after installing MCUboot:** it starts at
@@ -64,7 +69,11 @@ adds **Sync Time**, an InfiniLink hint, on-watch approval, and a PC sender.
 Version 0.2.5 successfully received PC time after a reboot, confirmed by the user
 on 2026-10-05; reopening sync without rebooting exposed a radio restart bug. Version 0.2.6
 extends the sync window from one to five minutes and restores the radio crystal
-clock when reopening sync; it is not yet installed.
+clock when reopening sync. The next 0.2.7 candidate also exposes the standard
+Battery Service that InfiniLink uses to finish its connected state. InfiniLink's
+**Developer → Force ANCS** option must be off: goPine does not implement ANCS,
+Bluetooth security, bonding, notifications, or a persistent companion connection.
+The 0.3.0 candidate includes this compatibility work and the clock tools below.
 Bluetooth stays off outside that explicit sync window. See [time sync](docs/time.md).
 The planned-reset handoff still needs dedicated hardware testing.
 
@@ -85,10 +94,24 @@ return. **Time & Date** includes **Set Time**, **Set Date**, and a 12/24-hour
 toggle. Tap +/− to adjust fields; Save applies them, while Cancel, swipe-right,
 Back, or sleeping discards the draft. Setting time resets seconds to zero;
 setting date preserves the current time of day. Years 2000–2099 are supported.
-Time/date adjustments and the format choice participate in the planned-reset
-handoff (12-hour is the default). They do not change sleep, touch-hold, or
-update-expiry timers. Merely changing a setting does not write flash.
+Time/date adjustments participate in the planned-reset handoff. The 12/24-hour
+choice is now saved along with alarms and timers after a short edit delay.
+Time changes do not change sleep, touch-hold, or update-expiry timers.
 See [time and sync notes](docs/time.md) for limitations and the PC/phone plan.
+
+Swipe **right** from the clock to open **Clock Tools**. Stopwatch supports lap,
+pause/resume, and reset. Countdown supports durations up to 23:59:59, pause/resume,
+and reset. Five alarms support once, daily, or weekdays. Alerts wake the display,
+pulse the vibration motor, and offer dismissal or a five-minute alarm snooze.
+The side button dismisses an alert; alerts stop after one minute.
+
+Settings and timer state persist in MCUboot builds. Running timers use saved
+timestamps and the best available reboot clock; a later accepted time sync
+reconciles restored operations that have not been changed. An explicit clock
+`initialized` flag distinguishes an approximate calendar from an unset clock.
+Without a usable calendar, duration timers resume from saved durations and
+calendar alarms wait for time/date setup. See [clock tools and persistence](docs/timers.md)
+for controls, reboot behavior, storage migration, and tests.
 
 Settings also includes **Firmware Update**. To enter Bluetooth recovery,
 press and hold **HOLD 3 SECONDS** until the countdown finishes. Releasing early,
@@ -109,8 +132,9 @@ responsiveness still need focused hardware checks.
 
 Version 0.2.4 uses a true-black background, dark-charcoal
 cards, and native-size antialiased DejaVu Sans text. Four-bit glyph coverage is
-blended against the actual background; the tiny Picopixel metadata labels stay
-pixel-aligned. Font data is kept in immutable tables, with no runtime TTF parser
+blended against the actual background. Version 0.3.0 replaces tiny metadata
+labels with readable 18px text, including editor units and clock warnings.
+Font data is kept in immutable tables, with no runtime TTF parser
 or full-screen smoothing. See [font generation and licensing](internal/uifont/README.md).
 The small `internal/gfx` package provides crisp filled/outlined boxes plus
 antialiased lines, circles, discs, and filled rounded boxes, all clipped to the
@@ -124,6 +148,23 @@ for the test scope and remaining dedicated hardware checks.
 ```sh
 go test ./...
 go vet ./...
+go test -run 'TestScript|TestRuntime|TestUnsetClock|TestTimersCreatedBefore' .
 tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=00:00:00" -o /tmp/goPine.hex .
 bash scripts/build-ota.sh 0.2.0
+```
+
+The scripted tests advance a virtual clock through the production event loop,
+including asleep deadlines, snooze, radio cancellation, and interrupted updater
+holds. They do not wait for real minutes to pass. Set `GOPINE_TEST_SCREENSHOTS`
+to a directory when running tests to export the SDL-rendered screens.
+
+BLE OTA builds now check the linked ELF's task-stack size, heap region, and
+selected call-path frame budgets before packaging. The JSON resource report is
+saved beside the firmware. This rejects the oversized frames in the failed
+0.3.0 trial; it is a regression guard, not a complete static stack proof or a
+measurement of free runtime heap. See [resource audit](docs/timers.md#failed-030-hardware-trial-and-resource-audit).
+
+```sh
+python3 scripts/test_check_resources.py
+python3 scripts/check-resources.py build/ota/gopine-0.3.1.elf
 ```

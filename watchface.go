@@ -13,12 +13,13 @@ import (
 var warning = color.RGBA{255, 170, 68, 255}
 
 const clockBaseline = 145
+const clockMeridiemGap = 4
 
 func clockLineWidth(text, meridiem string) int16 {
 	w, _ := tinyfont.LineWidth(&uifont.Clock, text)
 	if meridiem != "" {
-		mw, _ := tinyfont.LineWidth(&uifont.Meridiem, meridiem)
-		w += 6 + mw
+		mw, _ := tinyfont.LineWidth(&uifont.Regular18, meridiem)
+		w += clockMeridiemGap + mw
 	}
 	return int16(w)
 }
@@ -29,7 +30,7 @@ func drawLargeTime(d canvas, text, meridiem string) {
 	writeLine(d, &uifont.Clock, x, clockBaseline, text, white)
 	if meridiem != "" {
 		w, _ := tinyfont.LineWidth(&uifont.Clock, text)
-		writeLine(d, &uifont.Meridiem, x+int16(w)+6, clockBaseline, meridiem, muted)
+		writeLine(d, &uifont.Regular18, x+int16(w)+clockMeridiemGap, clockBaseline, meridiem, muted)
 	}
 }
 
@@ -93,7 +94,11 @@ func (u *watchUI) drawFrame(d canvas, now time.Time, p powerStatus) {
 	if u.page == pageClock {
 		drawBattery(d, 136, 15, p)
 		writeLine(d, &uifont.Bold18, 180, 31, fmt.Sprintf("%d%%", p.Percent), powerColor(p))
-	} else if u.page != pageTimeSettings && u.page != pageSetTime && u.page != pageSetDate {
-		centered(d, &uifont.Regular18, 235, fmt.Sprintf("%d%%  %s", p.Percent, powerLabel(p)), muted)
+	} else if u.page < pageApps && u.page != pageTimeSettings && u.page != pageSetTime && u.page != pageSetDate {
+		if u.page == pageSettings && u.settingsNote != "" {
+			centered(d, &uifont.Regular18, 235, u.settingsNote, warning)
+		} else {
+			centered(d, &uifont.Regular18, 235, fmt.Sprintf("%d%%  %s", p.Percent, powerLabel(p)), muted)
+		}
 	}
 }

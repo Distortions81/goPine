@@ -42,6 +42,16 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		{"holding", watchUI{page: pageUpdate, holding: true, holdStep: 15}, powerStatus{Percent: 73}},
 		{"trial", watchUI{page: pageTrial}, powerStatus{Percent: 73}},
 		{"error", watchUI{page: pageMessage, message: "Recovery setup failed. Check power and use wired setup again."}, powerStatus{Percent: 73}},
+		{"apps", watchUI{page: pageApps}, powerStatus{Percent: 73}},
+		{"alarms", watchUI{page: pageAlarms, timers: newTimerState(), clock: watchClock{initialized: true}}, powerStatus{Percent: 73}},
+		{"alarms-unset", watchUI{page: pageAlarms, timers: newTimerState()}, powerStatus{Percent: 73}},
+		{"alarm-edit", watchUI{page: pageAlarmEdit, edit: clockEdit{hour: 7, minute: 30}}, powerStatus{Percent: 73}},
+		{"alarm-repeat", watchUI{page: pageAlarmRepeat, editRepeat: alarmWeekdays}, powerStatus{Percent: 73}},
+		{"stopwatch", watchUI{page: pageStopwatch, timers: timerState{watch: stopwatch{saved: time.Hour + 23*time.Minute + 45600*time.Millisecond, lap: 62 * time.Second}}}, powerStatus{Percent: 73}},
+		{"countdown", watchUI{page: pageCountdown, timers: newTimerState()}, powerStatus{Percent: 73}},
+		{"countdown-edit", watchUI{page: pageCountdownEdit, edit: clockEdit{hour: 1, minute: 23, day: 45}}, powerStatus{Percent: 73}},
+		{"alarm-alert", watchUI{page: pageAlert, timers: timerState{active: true, source: 2}}, powerStatus{Percent: 73}},
+		{"timer-alert", watchUI{page: pageAlert, timers: timerState{active: true, source: countdownSource}}, powerStatus{Percent: 73}},
 	} {
 		var renderer frameRenderer
 		if err := renderer.render(d, func(c canvas) {
@@ -63,6 +73,10 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 				t.Fatalf("save screenshot: %v, %v", err, closeErr)
 			}
 		}
+	}
+	// An automatic alert wake with no contact must accept the first fresh tap.
+	if err := d.Wake(); err != nil {
+		t.Fatal(err)
 	}
 	for _, kind := range []uint32{sdl.MOUSEBUTTONDOWN, sdl.MOUSEBUTTONUP} {
 		// go-sdl2 casts the concrete Go event to the larger SDL_Event union.

@@ -7,8 +7,10 @@ native-size antialiased glyphs, not enlarged one-bit bitmaps or a blur pass.
 Coverage is composited onto the actual background using premultiplied RGBA.
 
 The tables are immutable Go strings, avoiding a mutable bitmap allocation per
-glyph. The display goroutine reuses one glyph descriptor per font. The tiny
-Picopixel metadata labels remain deliberately pixel-aligned.
+glyph. The display goroutine reuses one glyph descriptor per font. Watch UI
+labels use at least the 18px fonts; captions are shortened to fit rather than
+using tiny metadata text. The legacy 14px AM/PM asset remains in the generated
+tables but is no longer used by the watch UI.
 
 Normal Go/TinyGo builds need no font files or Python installation. To regenerate:
 

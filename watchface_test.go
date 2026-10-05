@@ -60,7 +60,7 @@ func TestClockHasNoLowerStatusOrHint(t *testing.T) {
 		for _, state := range []chargeState{chargeDischarging, chargeCharging, chargeExternalPower} {
 			d := &memoryDisplay{}
 			d.FillScreen(black)
-			u := watchUI{page: pageClock, use24: use24}
+			u := watchUI{page: pageClock, use24: use24, clock: watchClock{initialized: true}}
 			u.drawFrame(d, now, powerStatus{Percent: 73, State: state})
 			bg := pixel.NewColor[pixel.RGB444BE](black.R, black.G, black.B).RGBA()
 			for y := clockBaseline + 1; y < 240; y++ {

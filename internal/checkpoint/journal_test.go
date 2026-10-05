@@ -1,7 +1,9 @@
 package checkpoint
 
 import (
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"testing"
 )
 
@@ -80,6 +82,24 @@ func mustOpen(t *testing.T, f Flash) *Journal {
 	return j
 }
 
+func TestOpenReusesRecordReadBuffer(t *testing.T) {
+	for _, magic := range []uint32{legacyMagic, headerMagic} {
+		f := newFlash()
+		h := versionHeader(magic)
+		copy(f.data[:], h[:])
+		copy(f.data[PageSize:], h[:])
+		// Scan 510 legacy or 50 current slots without allocating per record.
+		allocs := testing.AllocsPerRun(10, func() {
+			if _, err := Open(f); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if allocs > 12 {
+			t.Fatalf("journal %x open allocated per record: %.0f allocations", magic, allocs)
+		}
+	}
+}
+
 func TestAppendRotationDedupAndBackwardDate(t *testing.T) {
 	f := newFlash()
 	j := mustOpen(t, f)
@@ -94,12 +114,12 @@ func TestAppendRotationDedupAndBackwardDate(t *testing.T) {
 		}
 		j = mustOpen(t, f)
 		r, ok := j.Latest()
-		if !ok || r != (Record{hour, uint32(i + 1), i%2 != 0}) {
+		if !ok || r != (Record{Hours: hour, Sequence: uint32(i + 1), Use24: i%2 != 0, HasTime: true}) {
 			t.Fatal(i, r, ok)
 		}
 	}
-	if f.erases != 1 {
-		t.Fatal("expected first erase only after 510 anchors", f.erases)
+	if f.erases != (599/slots)-1 {
+		t.Fatal("unexpected page wear", f.erases)
 	}
 	if err := j.Save(MaxHours, false); err == nil {
 		t.Fatal("accepted out-of-range date")
@@ -116,7 +136,7 @@ func TestInterruptedSaveAtEveryWord(t *testing.T) {
 			}
 		}
 		old, hadOld := j.Latest()
-		for cut := 0; cut <= 10; cut++ {
+		for cut := 0; cut <= RecordSize/4+6; cut++ {
 			f := *base
 			f.budget = cut
 			j = mustOpen(t, &f)
@@ -130,7 +150,7 @@ func TestInterruptedSaveAtEveryWord(t *testing.T) {
 			f.budget = -1
 			j = mustOpen(t, &f)
 			got, ok := j.Latest()
-			want := Record{20000, old.Sequence + 1, true}
+			want := Record{Hours: 20000, Sequence: old.Sequence + 1, Use24: true, HasTime: true}
 			if ok && got != want && (!hadOld || got != old) {
 				t.Fatalf("count %d cut %d: mixed %+v", count, cut, got)
 			}
@@ -177,7 +197,7 @@ func TestSequenceWrap(t *testing.T) {
 	f := newFlash()
 	h := header()
 	copy(f.data[:], h[:])
-	r := encode(Record{100, ^uint32(0), false})
+	r := encode(Record{Hours: 100, Sequence: ^uint32(0), HasTime: true})
 	copy(f.data[headerSize:], r[:])
 	j := mustOpen(t, f)
 	if err := j.Save(101, false); err != nil {
@@ -223,10 +243,142 @@ type readbackFailure struct {
 func (f *readbackFailure) WriteAt(b []byte, off int64) (int, error) {
 	n, err := f.memoryFlash.WriteAt(b, off)
 	// First record's commit is programmed, but its verification cannot be read.
-	if f.armed && off == headerSize+12 {
+	if f.armed && off == headerSize+RecordSize-4 {
 		f.failRead = true
 	}
 	return n, err
+}
+
+func sampleSettings() Settings {
+	return Settings{CountdownSeconds: 300, Alarms: [5]Alarm{{Hour: 7, Minute: 30, Repeat: 2, Enabled: true}}}
+}
+
+func TestSettingsAndRuntimeAtomicityAtEveryWord(t *testing.T) {
+	for _, count := range []int{1, slots, 2 * slots} {
+		base := newFlash()
+		j := mustOpen(t, base)
+		for i := 0; i < count; i++ {
+			if err := j.Save(uint32(i), false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		old, _ := j.Latest()
+		settings := sampleSettings()
+		runtime := Runtime{StopwatchRunning: true, StopwatchStarted: 1791220000000, StopwatchMillis: 12345,
+			CountdownRunning: true, CountdownMillis: 250000, CountdownDeadline: 1791221000000, Timestamped: 3, ClockInitialized: true}
+		for cut := 0; cut <= RecordSize/4+6; cut++ {
+			f := *base
+			f.budget = cut
+			j = mustOpen(t, &f)
+			_ = j.SaveState(settings, true, runtime)
+			f.budget = -1
+			j = mustOpen(t, &f)
+			got, ok := j.Latest()
+			want := old
+			want.Sequence++
+			want.Use24, want.HasSettings, want.HasRuntime = true, true, true
+			want.Settings, want.Runtime = settings, runtime
+			if !ok || (got != old && got != want) {
+				t.Fatalf("mixed or lost snapshot count %d cut %d: %+v", count, cut, got)
+			}
+		}
+	}
+}
+
+func TestLegacyMigrationAtEveryWord(t *testing.T) {
+	base := newFlash()
+	h := versionHeader(legacyMagic)
+	copy(base.data[:], h[:])
+	var old [16]byte
+	binary.LittleEndian.PutUint32(old[:4], 20000)
+	binary.LittleEndian.PutUint32(old[4:8], 7)
+	binary.LittleEndian.PutUint32(old[8:12], crc32.ChecksumIEEE(old[:8]))
+	binary.LittleEndian.PutUint32(old[12:], recordCommit)
+	copy(base.data[headerSize:], old[:])
+	for cut := 0; cut <= RecordSize/4+6; cut++ {
+		f := *base
+		j := mustOpen(t, &f)
+		r, ok := j.Latest()
+		if !ok || r.Hours != 20000 || !r.HasTime || r.HasSettings {
+			t.Fatal("legacy read failed", r)
+		}
+		f.budget = cut
+		_ = j.SaveSettings(sampleSettings(), true)
+		f.budget = -1
+		j = mustOpen(t, &f)
+		r, ok = j.Latest()
+		if !ok || r.Hours != 20000 || (r.Sequence != 7 && r.Sequence != 8) {
+			t.Fatal("migration lost clock", cut, r)
+		}
+		if r.Sequence == 8 && (!r.HasSettings || r.Settings != sampleSettings()) {
+			t.Fatal("migration mixed settings")
+		}
+		if err := j.SaveSettings(sampleSettings(), true); err != nil {
+			t.Fatal("migration cannot resume", cut, err)
+		}
+		if !erased(f.data[:PageSize]) {
+			t.Fatal("legacy header left live after migration")
+		}
+	}
+}
+
+func TestStateValidationAndDedup(t *testing.T) {
+	f := newFlash()
+	j := mustOpen(t, f)
+	s := sampleSettings()
+	if err := j.SaveState(s, true, Runtime{}); err != nil {
+		t.Fatal(err)
+	}
+	writes := f.writes
+	if err := j.SaveState(s, true, Runtime{}); err != nil || f.writes != writes {
+		t.Fatal("duplicate snapshot wrote")
+	}
+	for _, r := range []Runtime{{Source: 6}, {Pending: 64}, {CountdownDeadline: -1}, {CountdownMillis: 86400000}, {SnoozeMillis: [5]uint32{300001}}} {
+		if err := j.SaveState(s, true, r); err == nil || f.writes != writes {
+			t.Fatal("invalid runtime saved", r)
+		}
+	}
+	s.Alarms[0].Minute = 60
+	if err := j.SaveSettings(s, false); err == nil || f.writes != writes {
+		t.Fatal("invalid alarm saved")
+	}
+	f = newFlash()
+	f.data[PageSize-1] = 0
+	if _, err := Open(f); err == nil {
+		t.Fatal("foreign data in record padding accepted")
+	}
+}
+
+func TestMigrationWithBothLegacyPagesOccupied(t *testing.T) {
+	base := newFlash()
+	for page := 0; page < 2; page++ {
+		h := versionHeader(legacyMagic)
+		copy(base.data[page*PageSize:], h[:])
+		var b [16]byte
+		binary.LittleEndian.PutUint32(b[:4], uint32(20000+page))
+		binary.LittleEndian.PutUint32(b[4:8], uint32(7+page))
+		binary.LittleEndian.PutUint32(b[8:12], crc32.ChecksumIEEE(b[:8]))
+		binary.LittleEndian.PutUint32(b[12:], recordCommit)
+		copy(base.data[page*PageSize+headerSize:], b[:])
+	}
+	for cut := 0; cut <= RecordSize/4+8; cut++ {
+		f := *base
+		j := mustOpen(t, &f)
+		f.budget = cut
+		_ = j.SaveSettings(sampleSettings(), true)
+		f.budget = -1
+		j = mustOpen(t, &f)
+		got, ok := j.Latest()
+		if !ok || got.Hours != 20001 || (got.Sequence != 8 && got.Sequence != 9) {
+			t.Fatal("two-page migration lost newest clock", cut, got)
+		}
+		if err := j.SaveSettings(sampleSettings(), true); err != nil {
+			t.Fatal("two-page migration could not recover", cut, err)
+		}
+		if got, _ = j.Latest(); !got.HasSettings {
+			t.Fatal("migration lost settings")
+		}
+	}
 }
 
 func TestCommittedButUncertainWriteRequiresReopen(t *testing.T) {

@@ -14,7 +14,8 @@ not shift touch-hold durations, sleep, battery polling, or updater deadlines.
 The simulator only adjusts its own watch clock, never the computer's clock.
 The same clock setter can later accept validated Bluetooth time updates.
 
-Normal use and manual edits stay in RAM; there are no periodic clock writes.
+There are no periodic clock writes. Version 0.3.0 persists user settings and
+timer operations after a short edit delay; see [clock tools](timers.md).
 Software-controlled OTA/revert resets now have a compact, one-shot time handoff
 (below). Cold starts, invalid handoffs, and unexpected resets use the build seed.
 There is no timezone database or automatic DST handling. The handoff does not
@@ -22,22 +23,25 @@ measure reboot/recovery time; accurate time still needs setting or synchronizati
 
 ### Planned reboot/update handoff
 
-The MCUboot build saves only when goPine is about to perform a software reset:
+The MCUboot build saves a clock handoff when goPine is about to perform a software reset:
 after successful recovery staging for OTA, or after waking external flash for
 Revert, immediately before `arm.SystemReset()`. Failed/canceled staging, clock
-edits, normal running, sleep, and KEEP do not save. There is no hourly timer.
+edits, normal running, sleep, and KEEP do not create a clock handoff. Settings
+and timer snapshots have their own change-triggered saves; there is no hourly timer.
 
-- Flash stores an integer **hours since 2000-01-01**, not a seconds timestamp
-  with zero low bits. The date/hour needs 20 bits for 2000–2099; one extra bit
-  stores 12/24-hour format. A sequence, CRC32, and commit word make each record
-  16 bytes. Identical hour/format values reuse the latest record without writing.
+- The clock anchor stores integer **hours since 2000-01-01**, using 20 bits
+  for 2000–2099. Version 0.3.0's 160-byte journal snapshots also hold settings,
+  timestamped timers, validity flags, sequence, CRC32, and a final commit word.
+  Saving an unchanged hour/format reuses the latest snapshot. Timer timestamps
+  are used to estimate elapsed durations, not to invent a running calendar after
+  an unplanned reset.
 - `POWER.GPREGRET` and `GPREGRET2` provide two retained bytes. Twelve bits hold
   seconds within the hour (0–3599); two hold the flash sequence modulo four;
   one is parity and one is a validity/commit flag. Writes invalidate the flag
   first and set it last. Clear the registers before any flash save, so an
   interrupted transaction cannot pair old seconds with a new hour.
 - On boot, both parts must validate and their sequence tags must match. Restore
-  the saved local calendar and mark it **TIME / DATE NEED SYNC**. Consume the
+  the saved local calendar and show **Set or sync time**. Consume the
   register handoff immediately, so a subsequent unplanned reset cannot reuse
   stale time. A missing/corrupt handoff does not restore an old flash-only hour.
 
@@ -51,12 +55,15 @@ no fresh handoff. Older/different firmware need not understand or preserve it.
 
 The journal uses two 4 KiB internal pages at **0x7e000–0x7ffff**, outside the
 primary image/trailer, scratch (0x7c000–0x7cfff), and spare page (0x7d000).
-Each page has a 16-byte ownership header and 255 records. Starting erased, the
-two pages accept 510 different anchors before the first erase; later rotation
+Each page has a 16-byte ownership header and 25 records. Starting erased, the
+two pages accept 50 different snapshots before the first erase; later rotation
 erases only the older page, never the newest committed record. Unknown storage
 without a recognized header is left untouched. A partially programmed initial
 header that cannot be recognized also fails closed. A failed/uncertain write
 stops further writes through that journal instance until reboot reopens it.
+The old 16-byte clock-only format is read and migrated on the first save. The
+new snapshot is committed before retiring old headers. Older goPine builds
+cannot read the new format and fall back to their build seed on downgrade.
 Reducing erases matters more than the number of zero bits: hardware still
 programs aligned 32-bit words and erases whole pages.
 
@@ -64,8 +71,16 @@ New flash writes require external power or at least 20% estimated charge.
 Reusing an existing hour/format needs only the registers and works without a
 flash write. Invalid dates or storage errors leave no valid handoff; clock
 storage is best-effort and never blocks OTA/rollback. No persistence backend is
-enabled in standalone/provisioning builds (their image can use all flash) or
-the desktop simulator.
+enabled in standalone/provisioning builds (their image can use all flash).
+Desktop persistence is opt-in with `GOPINE_SIM_STORAGE=/path/to/watch.flash`.
+
+The clock has separate `initialized` and `approximate` flags. A valid full
+build date/time or planned-reset handoff initializes an approximate calendar;
+manual setting or accepted sync establishes the supplied calendar. With no
+valid date (such as the default 1970 seed), `initialized` is false: calendar
+alarms remain unarmed, no calendar handoff is written, and restored duration
+timers use saved durations instead of subtracting timestamps from epoch zero.
+Original timer timestamps are retained for reconciliation after time setup.
 
 Tests cover every retained second/tag, single-bit corruption, invalidation and
 commit order, flash cuts between word writes, page rotation, foreign data,
@@ -137,15 +152,26 @@ reacquires HFXO before starting the host. This matches the observed restart
 failure but still requires on-watch confirmation. This revision is not yet
 installed. Sleep current remains unmeasured.
 
+The next 0.2.7 candidate adds the standard Battery Service (`0x180F`) and live
+Battery Level characteristic (`0x2A19`) during the sync window. InfiniLink reads
+that characteristic before it changes its UI from Connecting to Connected. The
+candidate still intentionally has no ANCS client, Bluetooth Security Manager,
+bond store, notifications, or background connection. In InfiniLink, enable
+Developer Mode and turn **Developer → Force ANCS** off before connecting. The
+default-on option passes Apple's `CBConnectPeripheralOptionRequiresANCS` when
+connecting and is incompatible with goPine's bounded unauthenticated sync mode.
+This candidate still needs an on-phone test.
+
 ## Bluetooth candidate: explicit Sync Time window
 
 Swipe left → Time & Date → Sync Time. Only this action initializes/starts NimBLE.
-The screen says **Open InfiniLink app on your iPhone / Connect to InfiniTime /
-Then confirm here**. InfiniLink is the iOS companion, not an Android requirement;
-the PC sender is an alternative. The name matches InfiniLink's discovery filter,
-not the firmware identity: this is still goPine, and it exposes no Bluetooth DFU
-service while syncing. A distinct, stable random address separates goPine's GATT
-cache from InfiniTime recovery (factory address with the low bit toggled).
+The screen reminds InfiniLink users to turn **Force ANCS** off, connect to
+InfiniTime, and confirm the received time on the watch. InfiniLink is the iOS
+companion, not an Android requirement; the PC sender is an alternative. The name
+matches InfiniLink's discovery filter, not the firmware identity: this is still
+goPine, and it exposes no Bluetooth DFU service while syncing. A distinct, stable
+random address separates goPine's GATT cache from InfiniTime recovery (factory
+address with the low bit toggled).
 
 The five-minute window (0.2.6; one minute in 0.2.5) keeps the display awake; the side button still sleeps and
 cancels it. A received proposal is validated and shown with ACCEPT/BACK. No
@@ -158,7 +184,10 @@ pairing, bonding, scan, or reconnect is enabled. The MCU RTC used for stack
 bookkeeping is not a Bluetooth transmission; sleep-current verification remains
 required. The receiver is unauthenticated: check the displayed time carefully.
 
-The GATT service is Current Time `0x1805`, with readable/writable `0x2A2B`.
+The GATT services are Current Time `0x1805`, with readable/writable `0x2A2B`,
+and Battery `0x180F`, with readable/notifiable `0x2A19`. The battery value is
+sampled when the sync window opens; notifications are declared for InfiniLink
+compatibility but are unnecessary during the bounded session and are not sent.
 Its write response acknowledges receipt, **not user acceptance**. The strict
 ten-byte decoder remains available. A narrow compatibility adapter also accepts
 InfiniLink's 9/10-byte packets with Sunday-based weekday and ambiguous fractional

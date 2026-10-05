@@ -18,6 +18,8 @@ type desktopDisplay struct {
 	touch              touchTracker
 	pointerDown        bool
 	pointerX, pointerY int16
+	asleep             bool
+	vibrating          bool
 }
 
 func openDisplay() (clockDisplay, error) {
@@ -112,11 +114,43 @@ func (d *desktopDisplay) PowerStatus() powerStatus {
 	return powerStatus{Percent: 100, State: chargeExternalPower}
 }
 
+func (d *desktopDisplay) Wake() error {
+	d.asleep, d.pointerDown = false, false
+	d.touch.cancelContact()
+	return d.Display()
+}
+
+func (d *desktopDisplay) KeepAwake() {}
+
+func (d *desktopDisplay) SetVibration(on bool) {
+	if d.vibrating == on {
+		return
+	}
+	d.vibrating = on
+	label := "goPine"
+	if on {
+		label += " - vibrating"
+	}
+	d.window.SetTitle(label)
+}
+
 func (d *desktopDisplay) Wait(duration time.Duration) (inputEvent, error) {
 	deadline := time.Now().Add(duration)
 	for time.Now().Before(deadline) {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			switch e := event.(type) {
+			case *sdl.KeyboardEvent:
+				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && e.Keysym.Sym == sdl.K_SPACE {
+					d.pointerDown = false
+					d.touch.cancelContact()
+					d.asleep = !d.asleep
+					if d.asleep {
+						d.FillScreen(black)
+						_ = d.Display()
+						return inputEvent{Kind: inputSleep}, nil
+					}
+					return inputEvent{Kind: inputWake}, nil
+				}
 			case *sdl.QuitEvent:
 				return inputEvent{Kind: inputQuit}, nil
 			case *sdl.WindowEvent:
@@ -128,6 +162,13 @@ func (d *desktopDisplay) Wait(duration time.Duration) (inputEvent, error) {
 				}
 			case *sdl.MouseButtonEvent:
 				if e.Button != sdl.BUTTON_LEFT {
+					continue
+				}
+				if d.asleep {
+					if e.Type == sdl.MOUSEBUTTONDOWN {
+						_ = d.Wake()
+						return inputEvent{Kind: inputWake}, nil
+					}
 					continue
 				}
 				d.pointerDown = e.Type == sdl.MOUSEBUTTONDOWN

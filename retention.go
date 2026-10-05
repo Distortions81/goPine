@@ -25,7 +25,7 @@ func loadSavedClock(u *watchUI, now time.Time, j *checkpoint.Journal, registers 
 		// later unexpected reset from reusing an old date with stale seconds.
 		retainedtime.Clear(registers)
 		if j != nil && valid {
-			if anchor, found := j.Latest(); found && r.Sequence == anchor.Sequence&3 {
+			if anchor, found := j.Latest(); found && anchor.HasTime && r.Sequence == anchor.Sequence&3 {
 				seconds := checkpoint.Epoch + int64(anchor.Hours)*3600 + int64(r.Seconds)
 				u.clock.SetLocal(now, time.Unix(seconds, 0).UTC())
 				u.clock.approximate = true // Reboot/recovery duration is unknowable.
@@ -37,7 +37,7 @@ func loadSavedClock(u *watchUI, now time.Time, j *checkpoint.Journal, registers 
 }
 
 // Called ONLY immediately before a software-controlled reset, after lengthy
-// update staging succeeds. No hourly/background writes or settings-save writes.
+// update staging succeeds. Settings saves never create a retained clock handoff.
 // A failure deliberately leaves no valid handoff; OTA/revert remains usable.
 func (p clockPersistence) beforeReset(u *watchUI, now time.Time, flashAllowed bool) bool {
 	if p.registers == nil {
@@ -48,14 +48,14 @@ func (p clockPersistence) beforeReset(u *watchUI, now time.Time, flashAllowed bo
 		return false
 	}
 	local := u.clock.Now(now)
-	if local.Year() < 2000 || local.Year() > 2099 {
+	if !u.clock.initialized || local.Year() < 2000 || local.Year() > 2099 {
 		return false
 	}
 	// Encode local calendar fields, NOT a timezone-adjusted Unix instant.
 	stamp := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), 0, time.UTC).Unix()
 	hours := uint32((stamp - checkpoint.Epoch) / 3600)
 	anchor, found := p.journal.Latest()
-	if !found || anchor.Hours != hours || anchor.Use24 != u.use24 {
+	if !found || !anchor.HasTime || anchor.Hours != hours || anchor.Use24 != u.use24 {
 		if !flashAllowed {
 			return false
 		}

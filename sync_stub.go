@@ -10,7 +10,7 @@ import (
 type unavailableTimeRadio struct{}
 
 func newTimeRadio() timeRadio { return unavailableTimeRadio{} }
-func (unavailableTimeRadio) Start([10]byte) error {
+func (unavailableTimeRadio) Start([10]byte, uint8) error {
 	return errors.New("no Bluetooth backend in this build")
 }
 func (unavailableTimeRadio) Stop()    {}

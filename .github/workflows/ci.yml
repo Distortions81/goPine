@@ -24,6 +24,8 @@ jobs:
         run: go vet ./...
       - name: Test PC time sender
         run: python3 scripts/test_sync_time.py
+      - name: Test resource-budget checker
+        run: python3 scripts/test_check_resources.py
       - name: Check module files
         run: go mod tidy -diff
       - name: Build simulator
@@ -61,7 +63,7 @@ jobs:
         env:
           FIRMWARE_TIME: "00:00:00"
           FIRMWARE_DATE: "2026-10-05"
-        run: bash scripts/build-ota.sh --ble 0.2.6
+        run: bash scripts/build-ota.sh --ble 0.3.1
       - name: Build wired recovery setup
         env:
           FIRMWARE_TIME: "00:00:00"

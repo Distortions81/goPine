@@ -20,6 +20,9 @@ type clockDisplay interface {
 	DrawBitmap(x, y int16, bitmap pixel.Image[pixel.RGB444BE]) error
 	PowerStatus() powerStatus
 	Wait(time.Duration) (inputEvent, error)
+	Wake() error
+	KeepAwake()
+	SetVibration(bool)
 	Close() error
 }
 

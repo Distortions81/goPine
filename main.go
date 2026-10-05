@@ -15,23 +15,45 @@ func main() {
 }
 
 func run() error {
+	app, err := openApplication()
+	if err != nil {
+		return err
+	}
+	defer app.close()
+	err = app.loop.run()
+	app.flush()
+	return err
+}
+
+type watchApplication struct {
+	loop  watchLoop
+	close func()
+	flush func()
+}
+
+// Clock/journal restoration uses large temporary values. Its frame must unwind
+// before the loop; closures retain only the state that actually needs to live.
+//
+//go:noinline
+func openApplication() (*watchApplication, error) {
 	if err := initializeClock(); err != nil {
-		return fmt.Errorf("initialize clock: %w", err)
+		return nil, fmt.Errorf("initialize clock: %w", err)
 	}
 	display, err := openDisplay()
 	if err != nil {
-		return fmt.Errorf("open display: %w", err)
+		return nil, fmt.Errorf("open display: %w", err)
 	}
-	defer display.Close()
 
 	ui := newWatchUI(firmwareState())
 	syncController := timeSyncController{radio: newTimeRadio()}
 	activeTimeRadio = syncController.radio
-	defer func() { syncController.close(); activeTimeRadio = nil }()
 	persistence := restoreClock(&ui, time.Now())
+	settings := loadSettings(&ui, time.Now(), persistence.journal)
 	beforeReset := func() {
 		// Best effort: clock storage failure must not prevent OTA or rollback.
-		persistence.beforeReset(&ui, time.Now(), updatePowerOK(display.PowerStatus()))
+		allowed := updatePowerOK(display.PowerStatus())
+		settings.flush(&ui, time.Now(), allowed)
+		persistence.beforeReset(&ui, time.Now(), allowed)
 	}
 	var renderer frameRenderer
 	progress := func(title string) func(int) {
@@ -56,54 +78,13 @@ func run() error {
 		ui.showMessage("Recovery ready. Install bootstrap HEX over SWD now.")
 	}
 
-	var previous frameKey
-	painted, awake := false, true
-	power := display.PowerStatus()
-	nextPower := time.Now().Add(time.Second)
-	for {
-		now := time.Now()
-		syncController.update(&ui, now)
-		if ui.sync.Open {
-			if d, ok := display.(interface{ keepAwake() }); ok {
-				d.keepAwake()
-			}
-		}
-		if !now.Before(nextPower) {
-			power = display.PowerStatus()
-			nextPower = now.Add(time.Second)
-		}
-		key := ui.frameKey(now, power)
-		if awake && (!painted || key != previous) {
-			if err := renderer.render(display, func(c canvas) {
-				ui.drawFrame(c, now, power)
-			}); err != nil {
-				return fmt.Errorf("refresh display: %w", err)
-			}
-			previous, painted = key, true
-		}
-
-		delay := min(nextMinuteDelay(ui.clock.Now(now)), time.Until(nextPower))
-		if ui.page == pageUpdate {
-			delay = min(delay, time.Until(ui.expires))
-		}
-		if ui.page == pageTimeSync {
-			delay = min(delay, 50*time.Millisecond)
-		}
-		event, err := display.Wait(max(delay, time.Millisecond))
-		if err != nil {
-			return fmt.Errorf("wait for display: %w", err)
-		}
-		if event.Kind == inputQuit {
-			return nil
-		}
-		if event.Kind == inputSleep {
-			awake = false
-		}
-		if event.Kind == inputWake {
-			awake, painted = true, false
-			renderer.invalidate()
-		}
-		switch ui.handle(event, time.Now(), firmwareState(), power) {
+	loop := watchLoop{display: display, ui: &ui, sync: &syncController, renderer: &renderer,
+		now: time.Now, state: firmwareState}
+	loop.save = func(now time.Time, power powerStatus) {
+		settings.update(&ui, now, updatePowerOK(power) && !syncController.running && !ui.timers.active && firmwareState() == firmwareConfirmed)
+	}
+	loop.action = func(action uiAction) {
+		switch action {
 		case actionKeep:
 			if err := keepFirmware(); err != nil {
 				ui.showMessage("Could not confirm. Reboot can still revert this build.")
@@ -121,10 +102,19 @@ func run() error {
 			} else if err := startFirmwareUpdate(progress("Starting updater"), beforeReset); err != nil {
 				ui.showMessage("Could not start updater. Check recovery with wired setup.")
 			}
-			painted = false
 		}
-		syncController.update(&ui, time.Now())
 	}
+	return &watchApplication{
+		loop: loop,
+		close: func() {
+			syncController.close()
+			activeTimeRadio = nil
+			_ = display.Close()
+		},
+		flush: func() {
+			settings.flush(&ui, time.Now(), updatePowerOK(display.PowerStatus()) && firmwareState() == firmwareConfirmed)
+		},
+	}, nil
 }
 
 // Exclude input timestamps: 50Hz touch polling should repaint only when visible
@@ -137,18 +127,21 @@ type frameKey struct {
 	edit                  clockEdit
 	approximate           bool
 	syncState             string
+	timerState            string
+	initialized           bool
+	settingsNote          string
 }
 
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 	clock := ""
-	if u.page == pageClock || u.page == pageTimeSettings {
+	if u.page == pageClock || u.page == pageTimeSettings || u.page == pageAlert {
 		clock = u.clock.Now(now).Format("2006-01-02 15:04")
 	}
 	syncState := ""
 	if u.page == pageTimeSync {
 		syncState = fmt.Sprintf("%t/%t/%d/%s", u.sync.Open, u.sync.Pending, now.Unix(), u.syncStatus)
 	}
-	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep, u.edit, u.clock.approximate, syncState}
+	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep, u.edit, u.clock.approximate, syncState, u.timerFrameKey(now), u.clock.initialized, u.settingsNote}
 }
 
 func formatTime(t time.Time) string {

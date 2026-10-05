@@ -22,3 +22,8 @@ func initializeClock() error {
 	runtime.AdjustTimeOffset(target.UnixNano() - now.UnixNano())
 	return nil
 }
+
+func initialClockInitialized() bool {
+	target, err := buildClockTime(firmwareDate, firmwareTime)
+	return err == nil && target.Year() >= 2000 && target.Year() <= 2099
+}

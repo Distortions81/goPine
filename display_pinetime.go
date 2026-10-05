@@ -23,6 +23,8 @@ type pineTimeDisplay struct {
 	sleepAt           time.Time
 	touch             touchController
 	touchEvents       touchQueue
+	vibrating         bool
+	vibrationEnds     time.Time
 }
 
 const (
@@ -99,6 +101,8 @@ func openDisplay() (clockDisplay, error) {
 	machine.BUTTON_OUT.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.BUTTON_OUT.Low()
 	machine.BUTTON_IN.Configure(machine.PinConfig{Mode: machine.PinInput})
+	machine.VIBRATOR_PIN.High() // Active-low, off before configuring output.
+	machine.VIBRATOR_PIN.Configure(machine.PinConfig{Mode: machine.PinOutput})
 
 	d := &pineTimeDisplay{
 		DeviceOf:   &display,
@@ -151,7 +155,7 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 		if pressed && !d.buttonPressed {
 			d.buttonPressed = true
 			d.touchEvents.clear()
-			d.touch.tracker.cancel()
+			d.touch.tracker.cancelContact()
 			if d.screenOn {
 				if err := d.setScreen(false); err != nil {
 					return inputEvent{}, err
@@ -187,11 +191,11 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 			if err := d.setScreen(false); err != nil {
 				return inputEvent{}, err
 			}
-			d.touch.tracker.cancel()
+			d.touch.tracker.cancelContact()
 			d.touchEvents.clear()
 			return inputEvent{Kind: inputSleep}, nil
 		}
-		if d.screenOn && !now.Before(refreshAt) {
+		if !now.Before(refreshAt) {
 			return inputEvent{Kind: inputRefresh}, nil
 		}
 
@@ -206,6 +210,10 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 // Called between raster strips as well as from Wait. Never dispatch UI actions
 // recursively from a draw; queue observations for the normal input loop.
 func (d *pineTimeDisplay) serviceInput() {
+	// Also bound the pulse during lengthy frame rendering or a slow UI action.
+	if d.vibrating && !time.Now().Before(d.vibrationEnds) {
+		d.SetVibration(false)
+	}
 	serviceTimeRadio()
 	if !d.touchEvents.push(d.touch.Poll()) {
 		d.touch.tracker.cancel()
@@ -214,10 +222,28 @@ func (d *pineTimeDisplay) serviceInput() {
 
 // Keep the short sync/confirmation window visible while the phone connects.
 // The physical button still sleeps immediately and cancels the sync window.
-func (d *pineTimeDisplay) keepAwake() {
+func (d *pineTimeDisplay) KeepAwake() {
 	if d.screenOn {
 		d.sleepAt = time.Now().Add(screenTimeout)
 	}
+}
+
+func (d *pineTimeDisplay) Wake() error {
+	d.touchEvents.clear()
+	d.touch.tracker.cancelContact()
+	if err := d.setScreen(true); err != nil {
+		return err
+	}
+	d.KeepAwake()
+	return nil
+}
+
+func (d *pineTimeDisplay) SetVibration(on bool) {
+	if on && !d.vibrating {
+		d.vibrationEnds = time.Now().Add(alertPulseDuration)
+	}
+	d.vibrating = on
+	machine.VIBRATOR_PIN.Set(!on)
 }
 
 func (d *pineTimeDisplay) readButton() bool {
@@ -265,6 +291,7 @@ func setBacklight(on bool) {
 }
 
 func (d *pineTimeDisplay) Close() error {
+	d.SetVibration(false)
 	d.touch.Close()
 	return d.setScreen(false)
 }

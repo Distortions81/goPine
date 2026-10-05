@@ -12,8 +12,8 @@ import (
 type pineTimeRadio struct{}
 
 func newTimeRadio() timeRadio { return pineTimeRadio{} }
-func (pineTimeRadio) Start(value [10]byte) error {
-	if rc := ble.Start(value, uint32(timesync.Window/time.Millisecond)); rc != 0 {
+func (pineTimeRadio) Start(value [10]byte, battery uint8) error {
+	if rc := ble.Start(value, battery, uint32(timesync.Window/time.Millisecond)); rc != 0 {
 		return fmt.Errorf("BLE start: %d", rc)
 	}
 	return nil

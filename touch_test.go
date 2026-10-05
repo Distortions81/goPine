@@ -69,3 +69,25 @@ func TestTouchSwipeAndWakeSuppression(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomaticWakeAllowsFreshTapButSuppressesExistingContact(t *testing.T) {
+	now := time.Unix(0, 0)
+	var tracker touchTracker
+	tracker.cancelContact()
+	if e := tracker.decode(touchData(true, 120, 210), now); e.Kind != inputPress {
+		t.Fatal("idle wake swallowed fresh press")
+	}
+	if e := tracker.decode(touchData(false, 120, 210), now.Add(100*time.Millisecond)); e.Kind != inputTap {
+		t.Fatal("idle wake swallowed fresh tap")
+	}
+	tracker.decode(touchData(true, 120, 210), now.Add(time.Second))
+	tracker.cancelContact()
+	if e := tracker.decode(touchData(false, 120, 210), now.Add(1100*time.Millisecond)); e.Kind == inputTap {
+		t.Fatal("held contact dismissed new alert")
+	}
+	tracker.cancel() // An existing input fault still requires a release.
+	tracker.cancelContact()
+	if e := tracker.decode(touchData(true, 120, 210), now.Add(2*time.Second)); e.Kind == inputPress {
+		t.Fatal("wake rearmed a lost contact")
+	}
+}

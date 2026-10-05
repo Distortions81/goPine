@@ -25,6 +25,14 @@ func (t *touchTracker) cancel() {
 	t.suppress = true
 }
 
+// A button/automatic wake only needs to suppress an existing contact. Marking
+// an idle tracker suppressed would swallow the first fresh tap on the alert.
+func (t *touchTracker) cancelContact() {
+	if t.down {
+		t.cancel()
+	}
+}
+
 func (t *touchTracker) decode(data [6]byte, now time.Time) touchEvent {
 	x := int16(data[2]&0xf)<<8 | int16(data[3])
 	y := int16(data[4]&0xf)<<8 | int16(data[5])

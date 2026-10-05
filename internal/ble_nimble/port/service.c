@@ -19,7 +19,8 @@ extern void ble_gap_reset_state(int reason);
 
 static bool initialized, synced, window, pending;
 static uint16_t connection = BLE_HS_CONN_HANDLE_NONE;
-static uint8_t address_type, incoming[10], incoming_len, current[10];
+static uint8_t address_type, incoming[10], incoming_len, current[10], battery_level;
+static uint16_t battery_handle;
 static uint32_t received_at, expires_at;
 static uint32_t disconnect_after;
 static int failure;
@@ -61,11 +62,24 @@ static int time_access(uint16_t conn, uint16_t attr,
     return 0; // Transport receipt only, not approval of a clock change.
 }
 
+static int battery_access(uint16_t conn, uint16_t attr,
+                          struct ble_gatt_access_ctxt *ctx, void *arg) {
+    (void)conn; (void)attr; (void)arg;
+    if (ctx->op != BLE_GATT_ACCESS_OP_READ_CHR) return BLE_ATT_ERR_UNLIKELY;
+    return os_mbuf_append(ctx->om, &battery_level, 1) ? BLE_ATT_ERR_INSUFFICIENT_RES : 0;
+}
+
 static const struct ble_gatt_svc_def services[] = {
     {.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = BLE_UUID16_DECLARE(0x1805),
      .characteristics = (struct ble_gatt_chr_def[]) {
          {.uuid = BLE_UUID16_DECLARE(0x2a2b), .access_cb = time_access,
           .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE},
+         {0}}},
+    {.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = BLE_UUID16_DECLARE(0x180f),
+     .characteristics = (struct ble_gatt_chr_def[]) {
+         {.uuid = BLE_UUID16_DECLARE(0x2a19), .access_cb = battery_access,
+          .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+          .val_handle = &battery_handle},
          {0}}},
     {0}
 };
@@ -94,13 +108,13 @@ static void advertise(void) {
     int32_t remaining = (int32_t)(expires_at - ble_npl_time_get());
     if (remaining <= 0) return;
     struct ble_hs_adv_fields fields = {0};
-    static const ble_uuid16_t uuid = BLE_UUID16_INIT(0x1805);
+    static const ble_uuid16_t uuids[] = {BLE_UUID16_INIT(0x1805), BLE_UUID16_INIT(0x180f)};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.name = (uint8_t *)"InfiniTime"; // InfiniLink discovery filter.
     fields.name_len = 10;
     fields.name_is_complete = 1;
-    fields.uuids16 = &uuid;
-    fields.num_uuids16 = 1;
+    fields.uuids16 = uuids;
+    fields.num_uuids16 = 2;
     fields.uuids16_is_complete = 1;
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc) { failure = rc; return; }
@@ -126,7 +140,7 @@ static void on_sync(void) {
 }
 static void on_reset(int reason) { synced = false; failure = reason ? reason : -1; }
 
-int gopine_ble_start(const uint8_t *value, uint32_t window_ms) {
+int gopine_ble_start(const uint8_t *value, uint8_t battery, uint32_t window_ms) {
     // Signed deadline arithmetic requires a positive window below 2^31 ms.
     if (!window_ms || window_ms > INT32_MAX) return BLE_HS_EINVAL;
     if (init_failure) return init_failure;
@@ -156,6 +170,7 @@ int gopine_ble_start(const uint8_t *value, uint32_t window_ms) {
     // must reacquire it before starting the host/controller again.
     ble_phy_rfclk_enable();
     memcpy(current, value, 10);
+    battery_level = battery > 100 ? 100 : battery;
     pending = false; window = true; failure = 0; disconnect_after = 0;
     expires_at = ble_npl_time_get() + window_ms;
     if (!host_up) { host_up = true; ble_hs_sched_start(); }

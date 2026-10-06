@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"time"
 )
 
@@ -46,7 +46,7 @@ func buildClockTime(date, clock string) (time.Time, error) {
 	if date != "" {
 		day, err = time.Parse("2006-01-02", date)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("invalid firmware date: %w", err)
+			return time.Time{}, wrapError("invalid firmware date", err)
 		}
 	}
 	return day.Add(time.Duration(seconds) * time.Second), nil
@@ -54,20 +54,20 @@ func buildClockTime(date, clock string) (time.Time, error) {
 
 func parseClockTime(value string) (int64, error) {
 	if len(value) != len("00:00:00") || value[2] != ':' || value[5] != ':' {
-		return 0, fmt.Errorf("time must use HH:MM:SS")
+		return 0, errors.New("time must use HH:MM:SS")
 	}
 
 	hour, ok := parseTwoDigits(value[0:2])
 	if !ok || hour > 23 {
-		return 0, fmt.Errorf("invalid hour")
+		return 0, errors.New("invalid hour")
 	}
 	minute, ok := parseTwoDigits(value[3:5])
 	if !ok || minute > 59 {
-		return 0, fmt.Errorf("invalid minute")
+		return 0, errors.New("invalid minute")
 	}
 	second, ok := parseTwoDigits(value[6:8])
 	if !ok || second > 59 {
-		return 0, fmt.Errorf("invalid second")
+		return 0, errors.New("invalid second")
 	}
 
 	return int64(hour*60*60 + minute*60 + second), nil

@@ -178,3 +178,22 @@ func TestClipping(t *testing.T) {
 		t.Fatal("invalid geometry should be empty")
 	}
 }
+
+func TestCachedCornerMatchesOriginalSupersampling(t *testing.T) {
+	for y := 0; y < 6; y++ {
+		for x := 0; x < 6; x++ {
+			count := 0
+			for dy := 1; dy < 8; dy += 2 {
+				for dx := 1; dx < 8; dx += 2 {
+					a, b := x*8+dx-48, y*8+dy-48
+					if a*a+b*b <= 48*48 {
+						count++
+					}
+				}
+			}
+			if int(roundCorner6[y*6+x]) != count {
+				t.Fatalf("corner %d,%d differs", x, y)
+			}
+		}
+	}
+}

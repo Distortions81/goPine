@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 type chargeState uint8
 
 const (
@@ -64,5 +62,5 @@ func formatPowerStatus(status powerStatus) string {
 	case chargeExternalPower:
 		suffix = " PWR"
 	}
-	return fmt.Sprintf("%d%%%s", status.Percent, suffix)
+	return decimal(int(status.Percent)) + "%" + suffix
 }

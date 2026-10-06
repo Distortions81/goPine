@@ -1,9 +1,6 @@
 package main
 
-import (
-	"fmt"
-	"time"
-)
+import "time"
 
 // The same event loop runs on PineTime, SDL, and the scripted virtual clock.
 // Hardware actions and time are injected so tests can advance through sleeping,
@@ -25,9 +22,13 @@ func (l *watchLoop) run() error {
 	painted, awake := false, true
 	power := l.display.PowerStatus()
 	nextPower := l.now().Add(powerPollInterval)
+	// TinyGo treats callbacks passed through the renderer as escaping. Allocate
+	// one closure for the loop, not one closure and captured timestamp per frame.
+	var frameTime time.Time
+	drawFrame := func(c canvas) { l.ui.drawFrame(c, frameTime, power) }
 	wakeAlert := func() error {
 		if err := l.display.Wake(); err != nil {
-			return fmt.Errorf("wake for alert: %w", err)
+			return wrapError("wake for alert", err)
 		}
 		awake, painted = true, false
 		l.renderer.invalidate()
@@ -55,18 +56,19 @@ func (l *watchLoop) run() error {
 		// Capture the deadline before rendering. A frame that crosses a minute
 		// or alert boundary must service that deadline immediately afterward.
 		wakeAt := now.Add(nextLoopDelay(now, l.ui, nextPower, awake))
-		key := l.ui.frameKey(now, power)
-		if awake && (!painted || key != previous) {
-			if err := l.renderer.render(l.display, func(c canvas) {
-				l.ui.drawFrame(c, now, power)
-			}); err != nil {
-				return fmt.Errorf("refresh display: %w", err)
+		if awake {
+			key := l.ui.frameKey(now, power)
+			if !painted || key != previous {
+				frameTime = now
+				if err := l.renderer.render(l.display, drawFrame); err != nil {
+					return wrapError("refresh display", err)
+				}
+				previous, painted = key, true
 			}
-			previous, painted = key, true
 		}
 		event, err := l.display.Wait(max(wakeAt.Sub(l.now()), minimumLoopWait))
 		if err != nil {
-			return fmt.Errorf("wait for display: %w", err)
+			return wrapError("wait for display", err)
 		}
 		if event.Kind == inputQuit {
 			return nil

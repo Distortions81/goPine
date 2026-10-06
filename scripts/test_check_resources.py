@@ -41,6 +41,12 @@ class ResourceChecks(unittest.TestCase):
         symbols["_heap_start"] += 4096
         self.assertTrue(resources.audit(symbols, frames, 8192)["errors"])
 
+    def test_large_dependencies_cannot_silently_return(self):
+        for name in ("fmt.Sprintf", "(*fmt.pp).printValue", "crypto/internal/fips140.CAST"):
+            symbols, frames = self.fixture()
+            symbols[name] = 0x9000
+            self.assertTrue(resources.audit(symbols, frames, 8192)["errors"], name)
+
     def test_missing_debug_frame_fails_closed(self):
         symbols, frames = self.fixture()
         del frames[symbols[resources.LOOP]]

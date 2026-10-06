@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Distortions81/goPine/internal/gfx"
 	"github.com/Distortions81/goPine/internal/timesync"
@@ -241,12 +241,18 @@ var (
 )
 
 func centered(d canvas, font tinyfont.Fonter, y int16, text string, c color.RGBA) {
+	if !textVisible(d, font, y, text) {
+		return
+	}
 	width, _ := d.Size()
 	w, _ := tinyfont.LineWidth(font, text)
 	writeLine(d, font, width/2-int16(w)/2, y, text, c)
 }
 
 func drawButton(d canvas, x, width int16, label string, confirm bool) {
+	if !controlVisible(d, 174, 44, 202) {
+		return
+	}
 	c := card
 	if confirm {
 		c = positive
@@ -256,22 +262,58 @@ func drawButton(d canvas, x, width int16, label string, confirm bool) {
 	writeLine(d, &uifont.Bold18, x+width/2-int16(w)/2, 202, label, white)
 }
 
-func drawLines(d canvas, text string) {
-	line, y := "", int16(92)
-	for _, word := range strings.Fields(text) {
-		width, _ := tinyfont.LineWidth(&uifont.Regular18, line+" "+word)
-		if width > 208 && line != "" {
-			centered(d, &uifont.Regular18, y, line, muted)
-			y += 21
-			line = ""
-		}
-		if line != "" {
-			line += " "
-		}
-		line += word
+// Split without allocating a []string or concatenating progressively longer
+// strings. Line measurement and drawing both normalize whitespace to one space.
+func nextWord(text string) (word, rest string) {
+	text = strings.TrimLeftFunc(text, unicode.IsSpace)
+	i := strings.IndexFunc(text, unicode.IsSpace)
+	if i < 0 {
+		return text, ""
 	}
-	if line != "" {
-		centered(d, &uifont.Regular18, y, line, muted)
+	return text[:i], text[i:]
+}
+
+func drawWordLine(d canvas, text string, y int16, width uint32) {
+	if !textVisible(d, &uifont.Regular18, y, text) {
+		return
+	}
+	screen, _ := d.Size()
+	x := screen/2 - int16(width)/2
+	space, _ := tinyfont.LineWidth(&uifont.Regular18, " ")
+	for text != "" {
+		word, rest := nextWord(text)
+		if word == "" {
+			break
+		}
+		writeLine(d, &uifont.Regular18, x, y, word, muted)
+		w, _ := tinyfont.LineWidth(&uifont.Regular18, word)
+		x += int16(w + space)
+		text = rest
+	}
+}
+
+func drawLines(d canvas, text string) {
+	space, _ := tinyfont.LineWidth(&uifont.Regular18, " ")
+	start, rest := text, text
+	width, y := uint32(0), int16(92)
+	for rest != "" {
+		word, tail := nextWord(rest)
+		if word == "" {
+			break
+		}
+		w, _ := tinyfont.LineWidth(&uifont.Regular18, word)
+		if width != 0 && width+space+w > 208 {
+			drawWordLine(d, start[:len(start)-len(rest)], y, width)
+			start, width, y = rest, 0, y+21
+		}
+		if width != 0 {
+			width += space
+		}
+		width += w
+		rest = tail
+	}
+	if width != 0 {
+		drawWordLine(d, start, y, width)
 	}
 }
 
@@ -294,7 +336,8 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		if !u.use24 {
 			meridiem = formatMeridiem(now)
 		}
-		drawLargeTime(d, u.timeLabel(now), meridiem)
+		text, start := timeDigits(now, u.use24)
+		drawLargeTime(d, string(text[start:]), meridiem)
 		if !u.clock.initialized || u.clock.approximate {
 			centered(d, &uifont.Regular18, 181, "Set or sync time", warning)
 		}
@@ -329,7 +372,7 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		centered(d, &uifont.Regular18, 159, "Swipe back to cancel", muted)
 		label := "HOLD 3 SECONDS"
 		if u.holding {
-			label = fmt.Sprintf("HOLD %d.%ds", (30-u.holdStep)/10, (30-u.holdStep)%10)
+			label = "HOLD " + decimal((30-u.holdStep)/10) + "." + decimal((30-u.holdStep)%10) + "s"
 		}
 		drawButton(d, 24, 192, label, true)
 		gfx.FillBox(d, 30, 210, int16(u.holdStep)*180/30, 3, accent)

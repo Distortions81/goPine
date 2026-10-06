@@ -123,8 +123,8 @@ An unconfirmed OTA build shows **KEEP / REVERT** instead. The simulator supports
 mouse clicks, horizontal drags, and press-and-hold; run `GOPINE_SIM_TRIAL=1 go run .`
 to exercise the confirmation UI. KEEP returns to a clock with no update button.
 
-Rendering uses one reusable 240×16 RGB444 strip (5,760 bytes), batching text and
-buttons into at most 15 bitmap transfers for a full frame. Unchanged strips
+Rendering uses one reusable 240×8 RGB444 strip (2,880 bytes), batching text and
+buttons into at most 30 bitmap transfers for a full frame. Unchanged strips
 are skipped; hold feedback updates at 10Hz without clearing the whole screen.
 No full-screen framebuffer is needed. The 0.2.3 interface has been installed
 over Bluetooth and visually checked on the watch; hold timing and redraw
@@ -138,7 +138,9 @@ Font data is kept in immutable tables, with no runtime TTF parser
 or full-screen smoothing. See [font generation and licensing](internal/uifont/README.md).
 The small `internal/gfx` package provides crisp filled/outlined boxes plus
 antialiased lines, circles, discs, and filled rounded boxes, all clipped to the
-current strip. The strip buffer remains 5,760 bytes. This revision, including
+current strip. The later optimization pass halves the strip buffer and adds
+lossless font compression; see [performance measurements](docs/performance.md).
+The original graphics revision, including
 the touch-hold repair, was installed over Bluetooth on 2026-10-05; the user
 reported everything appeared to work. See [OTA validation notes](docs/ota.md)
 for the test scope and remaining dedicated hardware checks.

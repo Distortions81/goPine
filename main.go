@@ -2,7 +2,6 @@
 package main
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/Distortions81/goPine/internal/uifont"
@@ -37,11 +36,11 @@ type watchApplication struct {
 //go:noinline
 func openApplication() (*watchApplication, error) {
 	if err := initializeClock(); err != nil {
-		return nil, fmt.Errorf("initialize clock: %w", err)
+		return nil, wrapError("initialize clock", err)
 	}
 	display, err := openDisplay()
 	if err != nil {
-		return nil, fmt.Errorf("open display: %w", err)
+		return nil, wrapError("open display", err)
 	}
 
 	ui := newWatchUI(firmwareState())
@@ -58,16 +57,19 @@ func openApplication() (*watchApplication, error) {
 	var renderer frameRenderer
 	progress := func(title string) func(int) {
 		last := -1
+		current := 0
+		draw := func(c canvas) {
+			centered(c, &uifont.Bold18, 65, title, white)
+			centered(c, &uifont.Bold24, 130, decimal(current)+"%", accent)
+			centered(c, &uifont.Bold18, 175, "Keep power connected", muted)
+		}
 		return func(percent int) {
 			if percent/5 == last {
 				return
 			}
 			last = percent / 5
-			_ = renderer.render(display, func(c canvas) {
-				centered(c, &uifont.Bold18, 65, title, white)
-				centered(c, &uifont.Bold24, 130, fmt.Sprintf("%d%%", percent), accent)
-				centered(c, &uifont.Bold18, 175, "Keep power connected", muted)
-			})
+			current = percent
+			_ = renderer.render(display, draw)
 		}
 	}
 	if provisioningBuild && !updatePowerOK(display.PowerStatus()) {
@@ -120,36 +122,46 @@ func openApplication() (*watchApplication, error) {
 // Exclude input timestamps: 50Hz touch polling should repaint only when visible
 // state changes (the hold indicator advances at 10Hz).
 type frameKey struct {
-	page                  page
-	message, clock, power string
-	use24, holding        bool
-	step                  int
-	edit                  clockEdit
-	approximate           bool
-	syncState             string
-	timerState            string
-	initialized           bool
-	settingsNote          string
+	page                                     page
+	message, syncStatus, settingsNote        string
+	clockMinute                              int64
+	timer                                    timerFrameState
+	syncSecond                               int64
+	edit                                     clockEdit
+	step                                     int
+	percent                                  uint8
+	power                                    chargeState
+	use24, holding, approximate, initialized bool
+	syncOpen, syncPending                    bool
 }
 
+// Keep calendar temporaries out of the long-lived event loop frame.
+//
+//go:noinline
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
-	clock := ""
-	if u.page == pageClock || u.page == pageTimeSettings || u.page == pageAlert {
-		clock = u.clock.Now(now).Format("2006-01-02 15:04")
+	key := frameKey{page: u.page, message: u.message, settingsNote: u.settingsNote,
+		use24: u.use24, holding: u.holding, step: u.holdStep, edit: u.edit,
+		approximate: u.clock.approximate, initialized: u.clock.initialized,
+		percent: power.Percent, power: power.State, timer: u.timerFrameKey(now)}
+	if u.page == pageClock || u.page == pageAlert {
+		stamp := u.clock.Now(now)
+		_, offset := stamp.Zone()
+		key.clockMinute = (stamp.Unix() + int64(offset) - int64(stamp.Second())) / 60
 	}
-	syncState := ""
 	if u.page == pageTimeSync {
-		syncState = fmt.Sprintf("%t/%t/%d/%s", u.sync.Open, u.sync.Pending, now.Unix(), u.syncStatus)
+		key.syncOpen, key.syncPending, key.syncStatus = u.sync.Open, u.sync.Pending, u.syncStatus
+		if u.sync.Pending {
+			key.syncSecond = u.sync.Proposed.Add(now.Sub(u.sync.Received)).Unix()
+		} else if u.sync.Open {
+			key.syncSecond = int64(max(0, (u.sync.Expires.Sub(now)+time.Second-1)/time.Second))
+		}
 	}
-	return frameKey{u.page, u.message, clock, formatPowerStatus(power), u.use24, u.holding, u.holdStep, u.edit, u.clock.approximate, syncState, u.timerFrameKey(now), u.clock.initialized, u.settingsNote}
+	return key
 }
 
 func formatTime(t time.Time) string {
-	hour := t.Hour() % 12
-	if hour == 0 {
-		hour = 12
-	}
-	return fmt.Sprintf("%d:%02d", hour, t.Minute())
+	text, start := timeDigits(t, false)
+	return string(text[start:])
 }
 
 func formatMeridiem(t time.Time) string {

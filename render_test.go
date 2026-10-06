@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"image/color"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -69,23 +70,23 @@ func TestStripRendererMatchesDirectPixelsAndSkipsUnchanged(t *testing.T) {
 		if d.pixels != ref.pixels {
 			t.Fatalf("strip clipping changed page %d", p)
 		}
-		if d.writes != 15 || d.singles != 0 {
+		if d.writes != 240/stripHeight || d.singles != 0 {
 			t.Fatalf("got %d transfers and %d individual writes", d.writes, d.singles)
 		}
-		if len(r.strip.bitmap.RawBuffer()) != 5760 {
+		if len(r.strip.bitmap.RawBuffer()) != 2880 {
 			t.Fatal("unexpected RAM footprint")
 		}
 		if err := r.render(d, draw); err != nil {
 			t.Fatal(err)
 		}
-		if d.writes != 15 {
+		if d.writes != 240/stripHeight {
 			t.Fatal("unchanged frame sent again")
 		}
 		r.invalidate()
 		if err := r.render(d, draw); err != nil {
 			t.Fatal(err)
 		}
-		if d.writes != 30 {
+		if d.writes != 2*240/stripHeight {
 			t.Fatal("wake did not repaint")
 		}
 	}
@@ -104,7 +105,7 @@ func TestHoldFeedbackOnlyTransfersButtonStrips(t *testing.T) {
 	if err := r.render(d, draw); err != nil {
 		t.Fatal(err)
 	}
-	if d.writes < 1 || d.writes > 4 {
+	if d.writes < 1 || d.writes > (44+stripHeight-1)/stripHeight+1 {
 		t.Fatalf("hold feedback redrew %d strips", d.writes)
 	}
 }
@@ -140,7 +141,7 @@ func TestRendererRetriesFailedTransfers(t *testing.T) {
 	if err := r.render(d, draw); err != nil {
 		t.Fatal(err)
 	}
-	if d.writes != 15 {
+	if d.writes != 240/stripHeight {
 		t.Fatal("failed strip marked clean")
 	}
 }
@@ -156,5 +157,36 @@ func TestFrameKeyIgnoresSubminuteTimeAndContactTimestamps(t *testing.T) {
 	u.holdStep++
 	if a == u.frameKey(now, powerStatus{}) {
 		t.Fatal("hold progress not invalidated")
+	}
+}
+
+func TestPackedRectanglesMatchPixelReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	s := stripCanvas{bitmap: pixel.NewImage[pixel.RGB444BE](240, stripHeight), y: 16}
+	for n := 0; n < 1000; n++ {
+		s.FillScreen(accent)
+		x, y := int16(rng.Intn(300)-30), int16(rng.Intn(40))
+		w, h := int16(rng.Intn(260)-5), int16(rng.Intn(35)-5)
+		if n%20 == 0 {
+			x, w = 230, 32767
+		}
+		if n%21 == 0 {
+			y, h = 20, 32767
+		}
+		alpha := []uint8{0, 17, 128, 255}[n%4]
+		c := gfx.Coverage(color.RGBA{byte(n), 153, 34, 255}, alpha)
+		s.FillRectangle(x, y, w, h, c)
+		for yy := int(s.y); yy < int(s.y)+stripHeight; yy++ {
+			for xx := 0; xx < 240; xx++ {
+				want := pixel.NewColor[pixel.RGB444BE](accent.R, accent.G, accent.B).RGBA()
+				if xx >= int(x) && xx < int(x)+int(w) && yy >= int(y) && yy < int(y)+int(h) {
+					want = gfx.Over(want, c)
+					want = pixel.NewColor[pixel.RGB444BE](want.R, want.G, want.B).RGBA()
+				}
+				if got := s.bitmap.Get(xx, yy-int(s.y)).RGBA(); got != want {
+					t.Fatalf("case %d at %d,%d: got %v want %v", n, xx, yy, got, want)
+				}
+			}
+		}
 	}
 }

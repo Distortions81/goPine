@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/Distortions81/goPine/internal/timesync"
@@ -76,7 +76,7 @@ func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
 		return
 	}
 	if size < 0 || size > len(value) || age < 0 || age >= timesync.Window {
-		err = fmt.Errorf("invalid time report")
+		err = errors.New("invalid time report")
 	} else {
 		value, err = timesync.Normalize(value[:size])
 		if err == nil {
@@ -127,7 +127,7 @@ func (u *watchUI) drawTimeSync(d canvas, now time.Time) {
 		centered(d, &uifont.Regular18, 121, "Connect to InfiniTime", white)
 		centered(d, &uifont.Regular18, 150, "Then confirm here", muted)
 		seconds := max(0, int((u.sync.Expires.Sub(now)+time.Second-1)/time.Second))
-		centered(d, &uifont.Regular18, 177, fmt.Sprintf("Waiting %ds", seconds), accent)
+		centered(d, &uifont.Regular18, 177, "Waiting "+decimal(seconds)+"s", accent)
 	} else {
 		centered(d, &uifont.Regular18, 106, u.syncStatus, white)
 		centered(d, &uifont.Regular18, 138, "Bluetooth window closed", muted)

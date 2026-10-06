@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
 	"time"
 
@@ -97,9 +96,19 @@ func (u *watchUI) handleClockTap(e inputEvent, now time.Time) {
 }
 
 func clockControl(d canvas, x, y, w, h int16, label string, c color.RGBA) {
+	if !controlVisible(d, y, h, y+h/2+7) {
+		return
+	}
 	gfx.RoundBox(d, x, y, w, h, 6, c)
 	tw, _ := tinyfont.LineWidth(&uifont.Bold18, label)
 	writeLine(d, &uifont.Bold18, x+(w-int16(tw))/2, y+h/2+7, label, white)
+}
+
+func controlVisible(d canvas, y, height, baseline int16) bool {
+	_, top, _, bottom := gfx.Bounds(d)
+	lo, hi := uifont.Bold18.VerticalBounds()
+	return min(int(y), int(baseline)+int(lo)) < bottom &&
+		max(int(y)+int(height), int(baseline)+int(hi)) > top
 }
 
 func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
@@ -135,7 +144,7 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			x := int16(16 + i*120)
 			clockControl(d, x, 48, 88, 44, "+", card)
 			clockControl(d, x, 136, 88, 44, "-", card)
-			label := fmt.Sprintf("%02d", v)
+			label := twoDigits(v)
 			w, _ := tinyfont.LineWidth(&uifont.Bold24, label)
 			writeLine(d, &uifont.Bold24, x+(88-int16(w))/2, 114, label, white)
 			caption := "MINUTE"
@@ -157,7 +166,7 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			x := int16(16 + i*72)
 			clockControl(d, x, 48, 64, 44, "+", card)
 			clockControl(d, x, 136, 64, 44, "-", card)
-			label := fmt.Sprintf("%02d", v)
+			label := twoDigits(v)
 			w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
 			writeLine(d, &uifont.Bold18, x+(64-int16(w))/2, 114, label, white)
 			labels := [...]string{"YEAR", "MON", "DAY"}

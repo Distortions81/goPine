@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
 	"time"
 
@@ -25,6 +24,10 @@ func clockLineWidth(text, meridiem string) int16 {
 }
 
 func drawLargeTime(d canvas, text, meridiem string) {
+	if !textVisible(d, &uifont.Clock, clockBaseline, text) &&
+		(meridiem == "" || !textVisible(d, &uifont.Regular18, clockBaseline, meridiem)) {
+		return
+	}
 	width, _ := d.Size()
 	x := (width - clockLineWidth(text, meridiem)) / 2
 	writeLine(d, &uifont.Clock, x, clockBaseline, text, white)
@@ -59,6 +62,10 @@ func powerColor(p powerStatus) color.RGBA {
 }
 
 func drawBattery(d canvas, x, y int16, p powerStatus) {
+	l, t, r, b := gfx.Bounds(d)
+	if int(x) >= r || int(x)+33 <= l || int(y) >= b || int(y)+18 <= t {
+		return
+	}
 	c := powerColor(p)
 	gfx.Box(d, x, y, 30, 18, 2, c)
 	gfx.FillBox(d, x+2, y+2, 26, 14, black)
@@ -91,14 +98,15 @@ func drawBattery(d canvas, x, y int16, p powerStatus) {
 
 func (u *watchUI) drawFrame(d canvas, now time.Time, p powerStatus) {
 	u.draw(d, now)
+	percent, start := percentDigits(p.Percent)
 	if u.page == pageClock {
 		drawBattery(d, 136, 15, p)
-		writeLine(d, &uifont.Bold18, 180, 31, fmt.Sprintf("%d%%", p.Percent), powerColor(p))
+		writeLine(d, &uifont.Bold18, 180, 31, string(percent[start:]), powerColor(p))
 	} else if u.page < pageApps && u.page != pageTimeSettings && u.page != pageSetTime && u.page != pageSetDate {
 		if u.page == pageSettings && u.settingsNote != "" {
 			centered(d, &uifont.Regular18, 235, u.settingsNote, warning)
 		} else {
-			centered(d, &uifont.Regular18, 235, fmt.Sprintf("%d%%  %s", p.Percent, powerLabel(p)), muted)
+			centered(d, &uifont.Regular18, 235, string(percent[start:])+"  "+powerLabel(p), muted)
 		}
 	}
 }

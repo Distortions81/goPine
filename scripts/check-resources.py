@@ -96,6 +96,12 @@ def audit(symbols, by_address, task_stack):
         errors.append(f"Heap region shrank below 40 KiB: {heap} bytes")
     if sizes[RUN] > 256:
         errors.append(f"Long-lived main.run frame exceeds 256 bytes: {sizes[RUN]}")
+    # These dependencies previously retained tens of KiB of unrelated code.
+    # Keep the embedded formatting and image-checksum paths deliberately small.
+    if any(name.startswith(("fmt.", "(*fmt.")) for name in symbols):
+        errors.append("Generic fmt linked into firmware; use the integer UI/error helpers")
+    if any("crypto/internal/fips140" in name for name in symbols):
+        errors.append("FIPS module linked into firmware; use the image SHA-256 subset")
     for name, size in paths.items():
         if size + RESERVE > task_stack:
             errors.append(f"{name}: core frames {size} + reserve {RESERVE} > stack {task_stack}")
@@ -103,7 +109,7 @@ def audit(symbols, by_address, task_stack):
         "task_stack_bytes": task_stack,
         "ram_reserved_bytes": symbols["_heap_start"] - 0x20000000,
         "heap_region_bytes": heap,
-        "display_strip_bytes": 5760,
+        "display_strip_bytes": 2880,
         "deeper_call_reserve_bytes": RESERVE,
         "frames_bytes": sizes,
         "callback_frame_budget_bytes": callback,

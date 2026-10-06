@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"runtime"
 	"time"
 )
@@ -15,7 +14,7 @@ func initializeClock() error {
 
 	target, err := buildClockTime(firmwareDate, firmwareTime)
 	if err != nil {
-		return fmt.Errorf("parse firmware time: %w", err)
+		return wrapError("parse firmware time", err)
 	}
 
 	now := time.Now()

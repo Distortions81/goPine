@@ -365,3 +365,20 @@ pressing KEEP in goPine and reported that a short countdown woke the sleeping
 watch and vibrated. This establishes a successful boot/KEEP and countdown
 smoke test, not complete clock-tool validation. This application upload did not
 replace the bootloader or recovery image.
+
+### Memory and rendering optimization candidate (0.3.2)
+
+On 2026-10-05, the host uploaded the 209,828-byte 0.3.2 BLE candidate through
+recovery using USB adapter hci1. All bytes transferred in 2 minutes 22 seconds,
+and the receiver reported successful firmware validation. The activation/reset
+command was sent, but its write acknowledgement timed out with a GATT
+invalid-file-descriptor warning. No transfer retry was attempted. The user
+subsequently reported that goPine works and confirmed tapping KEEP, establishing
+successful boot and confirmation of this candidate. Detailed timing, power,
+and long-running stability measurements remain pending. This application
+upload did not replace the bootloader or stored recovery image.
+
+Package: `build/ota/gopine-dfu-0.3.2.zip`; SHA-256:
+`204244c5d3ac9956b9c57eabd2b200176b8c8140b6ec868388186a032f495f02`.
+The resource gate passed for this exact ELF. Optimization measurements and
+verification are recorded in [performance notes](performance.md).

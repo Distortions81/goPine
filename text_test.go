@@ -57,7 +57,40 @@ func TestRendererServicesInputEvenForUnchangedStrips(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if d.samples != 32 || d.writes != 15 {
+	if d.samples != 2*(240/stripHeight+1) || d.writes != 240/stripHeight {
 		t.Fatal("input starved on unchanged frame", d.samples, d.writes)
+	}
+}
+
+type countedFont struct {
+	*uifont.Font
+	lookups int
+}
+
+func (f *countedFont) GetGlyph(r rune) tinyfont.Glypher {
+	f.lookups++
+	return f.Font.GetGlyph(r)
+}
+
+func TestOffStripLineSkipsLayout(t *testing.T) {
+	font := countedFont{Font: &uifont.Bold18}
+	s := &countingStrip{}
+	centered(s, &font, 202, "HOLD 3 SECONDS", white)
+	if font.lookups != 0 {
+		t.Fatalf("off-strip label performed %d glyph lookups", font.lookups)
+	}
+}
+
+func TestMultilineTextRemainsVisibleAcrossStrips(t *testing.T) {
+	draw := func(c canvas) { writeLine(c, &uifont.Clock, -5, -15, "12:34\n5\r6", white) }
+	ref, got := &memoryDisplay{}, &memoryDisplay{}
+	ref.FillScreen(black)
+	draw(ref)
+	var r frameRenderer
+	if err := r.render(got, draw); err != nil {
+		t.Fatal(err)
+	}
+	if got.pixels != ref.pixels {
+		t.Fatal("whole-line clipping hid visible multiline text")
 	}
 }

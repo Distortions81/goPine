@@ -144,6 +144,8 @@ func circle(d Canvas, x, y, radius int16, filled bool, c color.RGBA) {
 	}
 }
 
+const roundCorner6 = "\x00\x00\x00\x07\x0d\x10\x00\x01\x0d\x10\x10\x10\x00\x0d\x10\x10\x10\x10\x07\x10\x10\x10\x10\x10\x0d\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10"
+
 // RoundBox fills a rounded rectangle. Only corner pixels use 4x4 coverage;
 // the straight interior goes through the canvas's batched rectangle path.
 func RoundBox(d Canvas, x, y, w, h, radius int16, c color.RGBA) {
@@ -156,10 +158,13 @@ func RoundBox(d Canvas, x, y, w, h, radius int16, c color.RGBA) {
 		return
 	}
 	ax, ay, aw, ah, ar := int(x), int(y), int(w), int(h), int(radius)
+	l, t, r, b := Bounds(d)
+	if ax >= r || ay >= b || ax+aw <= l || ay+ah <= t {
+		return
+	}
 	fillBox(d, ax+ar, ay, aw-2*ar, ah, c)
 	fillBox(d, ax, ay+ar, ar, ah-2*ar, c)
 	fillBox(d, ax+aw-ar, ay+ar, ar, ah-2*ar, c)
-	l, t, r, b := Bounds(d)
 	for _, right := range []bool{false, true} {
 		for _, bottom := range []bool{false, true} {
 			sx, sy := ax, ay
@@ -175,11 +180,24 @@ func RoundBox(d Canvas, x, y, w, h, radius int16, c color.RGBA) {
 			for yy := max(sy, t); yy < min(sy+int(radius), b); yy++ {
 				for xx := max(sx, l); xx < min(sx+int(radius), r); xx++ {
 					count := 0
-					for dy := 1; dy < 8; dy += 2 {
-						for dx := 1; dx < 8; dx += 2 {
-							a, b := int64(xx*8+dx-cx), int64(yy*8+dy-cy)
-							if a*a+b*b <= int64(radius)*int64(radius)*64 {
-								count++
+					if radius == 6 {
+						// All current UI cards use this radius. Retain the exact
+						// 4x4 sample counts in flash instead of resampling per frame.
+						px, py := xx-sx, yy-sy
+						if right {
+							px = 5 - px
+						}
+						if bottom {
+							py = 5 - py
+						}
+						count = int(roundCorner6[py*6+px])
+					} else {
+						for dy := 1; dy < 8; dy += 2 {
+							for dx := 1; dx < 8; dx += 2 {
+								a, b := int64(xx*8+dx-cx), int64(yy*8+dy-cy)
+								if a*a+b*b <= int64(radius)*int64(radius)*64 {
+									count++
+								}
 							}
 						}
 					}

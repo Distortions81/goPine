@@ -3,10 +3,11 @@
 package ota
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
+
+	"github.com/Distortions81/goPine/internal/imagesha256"
 )
 
 const (
@@ -60,7 +61,8 @@ func Validate(r io.ReaderAt, offset, limit int64) (Image, error) {
 		tlv[4] != 0x10 || tlv[5] != 0 || le.Uint16(tlv[6:8]) != 32 {
 		return result, errors.New("missing SHA-256 image TLV")
 	}
-	h := sha256.New()
+	var h imagesha256.Digest
+	h.Reset()
 	var buffer [256]byte
 	for pos := int64(0); pos < HeaderSize+bodySize; {
 		n := min(int64(len(buffer)), HeaderSize+bodySize-pos)
@@ -70,7 +72,7 @@ func Validate(r io.ReaderAt, offset, limit int64) (Image, error) {
 		_, _ = h.Write(buffer[:n])
 		pos += n
 	}
-	h.Sum(result.Digest[:0])
+	result.Digest = h.Sum()
 	for i, b := range result.Digest {
 		if b != tlv[i+8] {
 			return Image{}, errors.New("image SHA-256 mismatch")

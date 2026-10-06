@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"image/color"
 	"time"
 
 	"github.com/Distortions81/goPine/internal/uifont"
@@ -19,32 +19,67 @@ func repeatLabel(r alarmRepeat) string {
 	}
 }
 
-func durationLabel(d time.Duration, tenths bool) string {
-	d = max(0, min(d, 100*time.Hour-time.Millisecond))
+func durationDigits(d time.Duration) [10]byte {
+	d = displayDuration(d)
 	s := int(d / time.Second)
-	text := fmt.Sprintf("%02d:%02d:%02d", s/3600, (s/60)%60, s%60)
-	if tenths {
-		text += fmt.Sprintf(".%d", int(d/(100*time.Millisecond))%10)
-	}
+	text := [10]byte{'0', '0', ':', '0', '0', ':', '0', '0', '.', '0'}
+	text[0], text[1] = byte('0'+s/36000), byte('0'+s/3600%10)
+	text[3], text[4] = byte('0'+s/600%6), byte('0'+s/60%10)
+	text[6], text[7] = byte('0'+s/10%6), byte('0'+s%10)
+	text[9] = byte('0' + d/(100*time.Millisecond)%10)
 	return text
 }
 
-func (u *watchUI) timerFrameKey(now time.Time) string {
+func durationLabel(d time.Duration, tenths bool) string {
+	text := durationDigits(d)
+	if tenths {
+		return string(text[:])
+	}
+	return string(text[:8])
+}
+
+func drawDuration(d canvas, font tinyfont.Fonter, y int16, duration time.Duration, tenths bool, prefix string, c color.RGBA) {
+	text := durationDigits(duration)
+	n := 8
+	if tenths {
+		n = 10
+	}
+	centered(d, font, y, prefix+string(text[:n]), c)
+}
+
+func displayDuration(d time.Duration) time.Duration {
+	return max(0, min(d, 100*time.Hour-time.Millisecond))
+}
+
+// Comparable visible values avoid formatting strings on every input poll.
+// Flags also include button/lap visibility, even below the displayed precision.
+type timerFrameState struct {
+	value, lap                           int64
+	index, hour, minute                  uint8
+	repeat                               alarmRepeat
+	running, enabled, resumable, showLap bool
+}
+
+func (u *watchUI) timerFrameKey(now time.Time) timerFrameState {
 	t := &u.timers
 	switch u.page {
 	case pageAlarms:
 		a := &t.alarms[u.alarmIndex]
-		return fmt.Sprintf("%d/%d/%d/%d/%t", u.alarmIndex, a.hour, a.minute, a.repeat, a.enabled)
+		return timerFrameState{index: uint8(u.alarmIndex), hour: uint8(a.hour), minute: uint8(a.minute), repeat: a.repeat, enabled: a.enabled}
 	case pageAlarmRepeat:
-		return repeatLabel(u.editRepeat)
+		return timerFrameState{repeat: u.editRepeat}
 	case pageStopwatch:
-		return fmt.Sprintf("%s/%s/%t", durationLabel(t.watch.elapsed(now), true), durationLabel(t.watch.lap, true), t.watch.running)
+		return timerFrameState{value: int64(displayDuration(t.watch.elapsed(now)) / (100 * time.Millisecond)),
+			lap: int64(displayDuration(t.watch.lap) / (100 * time.Millisecond)), running: t.watch.running,
+			resumable: t.watch.saved > 0, showLap: t.watch.lap > 0}
 	case pageCountdown:
-		return fmt.Sprintf("%d/%t", (t.countdown.left(now)+time.Second-1)/time.Second, t.countdown.running)
+		left := t.countdown.left(now)
+		return timerFrameState{value: int64((left + time.Second - 1) / time.Second), running: t.countdown.running,
+			resumable: left > 0 && left < t.countdown.preset}
 	case pageAlert:
-		return fmt.Sprint(t.source)
+		return timerFrameState{index: uint8(t.source)}
 	}
-	return ""
+	return timerFrameState{}
 }
 
 func (u *watchUI) handleTimerTap(e inputEvent, now time.Time) {
@@ -156,7 +191,7 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 	case pageAlarms:
 		a := t.alarms[u.alarmIndex]
 		centered(d, &uifont.Bold18, 29, "ALARMS", white)
-		centered(d, &uifont.Regular18, 60, fmt.Sprintf("ALARM %d / %d", u.alarmIndex+1, alarmCount), muted)
+		centered(d, &uifont.Regular18, 60, "ALARM "+decimal(u.alarmIndex+1)+" / "+decimal(alarmCount), muted)
 		stamp := time.Date(2000, 1, 1, a.hour, a.minute, 0, 0, time.UTC)
 		label := u.timeLabel(stamp)
 		if !u.use24 {
@@ -187,9 +222,9 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 		clockControl(d, 126, 188, 102, 44, "SAVE", positive)
 	case pageStopwatch:
 		centered(d, &uifont.Bold18, 29, "STOPWATCH", white)
-		centered(d, &uifont.Bold24, 102, durationLabel(t.watch.elapsed(now), true), white)
+		drawDuration(d, &uifont.Bold24, 102, t.watch.elapsed(now), true, "", white)
 		if t.watch.lap > 0 {
-			centered(d, &uifont.Regular18, 140, "LAP "+durationLabel(t.watch.lap, true), muted)
+			drawDuration(d, &uifont.Regular18, 140, t.watch.lap, true, "LAP ", muted)
 		}
 		left, right := "START", "RESET"
 		if t.watch.running {
@@ -203,7 +238,7 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 		centered(d, &uifont.Bold18, 29, "COUNTDOWN", white)
 		// Round up so the display never says zero while time is still left.
 		left := t.countdown.left(now)
-		centered(d, &uifont.Bold24, 102, durationLabel((left+time.Second-1)/time.Second*time.Second, false), white)
+		drawDuration(d, &uifont.Bold24, 102, (left+time.Second-1)/time.Second*time.Second, false, "", white)
 		label := "SET DURATION"
 		if t.countdown.running {
 			label = "RUNNING"
@@ -223,7 +258,7 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 			x := int16(16 + i*72)
 			clockControl(d, x, 48, 64, 44, "+", card)
 			clockControl(d, x, 136, 64, 44, "-", card)
-			label := fmt.Sprintf("%02d", v)
+			label := twoDigits(v)
 			w, _ := tinyfont.LineWidth(&uifont.Bold24, label)
 			writeLine(d, &uifont.Bold24, x+(64-int16(w))/2, 114, label, white)
 			label = []string{"HR", "MIN", "SEC"}[i]
@@ -239,7 +274,7 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 	case pageAlert:
 		label := "TIMER DONE"
 		if t.source < alarmCount {
-			label = fmt.Sprintf("ALARM %d", t.source+1)
+			label = "ALARM " + decimal(t.source+1)
 		}
 		centered(d, &uifont.Bold24, 80, label, accent)
 		centered(d, &uifont.Bold24, 120, u.timeLabel(u.clock.Now(now)), white)

@@ -4,6 +4,10 @@ goPine is a digital clock with alarms, stopwatch, and countdown for the PineTime
 with [TinyGo](https://tinygo.org/). It also includes an SDL2 desktop simulator
 that uses the same clock and font rendering code as the watch build.
 
+Version **0.3.2** is installed and confirmed with KEEP on the watch. See the
+[roadmap](docs/roadmap.md) for completed work, remaining hardware checks, and
+the next CPU, drawing and power optimization priorities.
+
 ## Desktop simulator
 
 The application can run on Linux using the SDL2 desktop simulator:
@@ -69,11 +73,12 @@ adds **Sync Time**, an InfiniLink hint, on-watch approval, and a PC sender.
 Version 0.2.5 successfully received PC time after a reboot, confirmed by the user
 on 2026-10-05; reopening sync without rebooting exposed a radio restart bug. Version 0.2.6
 extends the sync window from one to five minutes and restores the radio crystal
-clock when reopening sync. The next 0.2.7 candidate also exposes the standard
+clock when reopening sync. The 0.2.7 compatibility work also exposes the standard
 Battery Service that InfiniLink uses to finish its connected state. InfiniLink's
 **Developer → Force ANCS** option must be off: goPine does not implement ANCS,
 Bluetooth security, bonding, notifications, or a persistent companion connection.
-The 0.3.0 candidate includes this compatibility work and the clock tools below.
+The installed 0.3.2 build includes this compatibility work and the clock tools below;
+repeated sync windows and InfiniLink still need focused hardware tests.
 Bluetooth stays off outside that explicit sync window. See [time sync](docs/time.md).
 The planned-reset handoff still needs dedicated hardware testing.
 

@@ -149,10 +149,10 @@ one duration passed from Go to the C bridge. Source inspection also found that
 the stop path released HFXO, while NimBLE's RF-management-disabled configuration
 requested it only once at initialization. Each new sync window now explicitly
 reacquires HFXO before starting the host. This matches the observed restart
-failure but still requires on-watch confirmation. This revision is not yet
-installed. Sleep current remains unmeasured.
+failure but still requires a dedicated repeated-window check. This change is
+included in the installed 0.3.2 build. Sleep current remains unmeasured.
 
-The next 0.2.7 candidate adds the standard Battery Service (`0x180F`) and live
+The 0.2.7 compatibility work adds the standard Battery Service (`0x180F`) and live
 Battery Level characteristic (`0x2A19`) during the sync window. InfiniLink reads
 that characteristic before it changes its UI from Connecting to Connected. The
 candidate still intentionally has no ANCS client, Bluetooth Security Manager,
@@ -160,7 +160,8 @@ bond store, notifications, or background connection. In InfiniLink, enable
 Developer Mode and turn **Developer → Force ANCS** off before connecting. The
 default-on option passes Apple's `CBConnectPeripheralOptionRequiresANCS` when
 connecting and is incompatible with goPine's bounded unauthenticated sync mode.
-This candidate still needs an on-phone test.
+This work is included in the installed 0.3.2 build and still needs an on-phone
+test. See the [roadmap](roadmap.md) for the remaining hardware checks.
 
 ## Bluetooth candidate: explicit Sync Time window
 

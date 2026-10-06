@@ -228,7 +228,9 @@ reproduced and diagnosed.
 - [x] Choose REVERT on the watch and verify that confirmed recovery returns.
 - [x] Choose KEEP on the next trial and verify the confirmation flag.
 - [ ] Reset after KEEP and verify that goPine stays installed.
-- [ ] Start another update after KEEP and complete the repeated OTA cycle.
+- [x] Start another update after KEEP and complete the repeated OTA cycle
+  (0.3.1 KEEP followed by recovery upload and KEEP on 0.3.2; see the
+  [0.3.2 validation record](#memory-and-rendering-optimization-candidate-032)).
 - [ ] Finish checking battery readings, touch controls and sleep/wake behavior.
 - [ ] Test a deliberately canceled BLE transfer and reconnect without wired repair.
 - [ ] Only with SWD recovery available, test power interruption while staging and

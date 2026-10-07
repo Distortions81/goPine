@@ -48,6 +48,9 @@ func openApplication() (*watchApplication, error) {
 	activeTimeRadio = syncController.radio
 	persistence := restoreClock(&ui, time.Now())
 	settings := loadSettings(&ui, time.Now(), persistence.journal)
+	// Cached UI power can be arbitrarily old during sleep. Sample only when
+	// actually about to write, rather than waking periodically for the ADC.
+	settings.writePowerOK = func() bool { return updatePowerOK(display.PowerStatus()) }
 	beforeReset := func() {
 		// Best effort: clock storage failure must not prevent OTA or rollback.
 		allowed := updatePowerOK(display.PowerStatus())

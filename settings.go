@@ -202,6 +202,8 @@ type settingsPersistence struct {
 	saved, observed settingsKey
 	changedAt       time.Time
 	failed          bool
+	writePowerOK    func() bool
+	powerDeferred   bool
 }
 
 func loadSettings(u *watchUI, now time.Time, j *checkpoint.Journal) *settingsPersistence {
@@ -226,6 +228,7 @@ func (p *settingsPersistence) update(u *watchUI, now time.Time, allowed bool) {
 	key := u.settingsKey()
 	if key != p.observed {
 		p.observed, p.changedAt = key, now
+		p.powerDeferred = false
 	}
 	if key == p.saved {
 		u.settingsNote = ""
@@ -245,9 +248,10 @@ func (p *settingsPersistence) update(u *watchUI, now time.Time, allowed bool) {
 	}
 }
 
-// A pending edit must still save promptly when sleep reduces battery polling.
+// A pending edit still saves during sleep. A fresh low-power rejection must
+// not leave an expired deadline spinning the loop; retry on the next event.
 func (p *settingsPersistence) deadline(allowed bool) time.Time {
-	if allowed && p.journal != nil && !p.failed && p.observed != p.saved {
+	if allowed && p.journal != nil && !p.failed && !p.powerDeferred && p.observed != p.saved {
 		return p.changedAt.Add(settingsSaveDelay)
 	}
 	return time.Time{}
@@ -257,6 +261,11 @@ func (p *settingsPersistence) flush(u *watchUI, now time.Time, allowed bool) boo
 	if !allowed || p.journal == nil || p.failed {
 		return false
 	}
+	if p.writePowerOK != nil && !p.writePowerOK() {
+		p.powerDeferred = true
+		return false
+	}
+	p.powerDeferred = false
 	if err := p.journal.SaveState(u.settings(), u.use24, u.runtimeSnapshot(now)); err != nil {
 		p.failed = true
 		u.settingsNote = "Storage error"

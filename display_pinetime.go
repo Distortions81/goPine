@@ -6,6 +6,7 @@ import (
 	"device/nrf"
 	"image/color"
 	"machine"
+	"runtime/interrupt"
 	"time"
 
 	"tinygo.org/x/drivers"
@@ -105,6 +106,7 @@ func openDisplay() (clockDisplay, error) {
 	machine.BUTTON_IN.Configure(machine.PinConfig{Mode: machine.PinInput})
 	machine.VIBRATOR_PIN.High() // Active-low, off before configuring output.
 	machine.VIBRATOR_PIN.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	configureIdleInterrupts()
 
 	d := &pineTimeDisplay{
 		DeviceOf:   &display,
@@ -114,7 +116,12 @@ func openDisplay() (clockDisplay, error) {
 	}
 	// Touch is optional at runtime so a controller fault cannot prevent the
 	// side button and clock display from working.
-	_ = d.touch.Configure()
+	if configureBoardI2C() == nil {
+		// Each transfer has TinyGo's bounded bus timeout. Sensor failures are
+		// nonfatal and do not prevent touch, button, or clock startup.
+		_, _ = shutdownUnusedSensors(boardI2C{}, time.Sleep)
+		_ = d.touch.Configure()
+	}
 	return d, nil
 }
 
@@ -212,7 +219,12 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 			interval = touchPollInterval // Catch brief IRQ windows during contact.
 		}
 		// Do not round a timer/alert deadline up to a full input poll.
-		time.Sleep(min(interval, max(time.Until(refreshAt), minimumLoopWait)))
+		remaining := max(time.Until(refreshAt), minimumLoopWait)
+		if !d.screenOn && !d.buttonPressed && !d.touch.tracker.down && !timeRadioNeedsService() {
+			d.waitAsleep(remaining)
+		} else {
+			time.Sleep(min(interval, remaining))
+		}
 	}
 }
 
@@ -282,6 +294,10 @@ func (d *pineTimeDisplay) readButton() bool {
 	}
 	pressed := machine.BUTTON_IN.Get()
 	machine.BUTTON_OUT.Low()
+	state := interrupt.Disable()
+	pressed = pressed || buttonWakePending.Get() != 0
+	buttonWakePending.Set(0)
+	interrupt.Restore(state)
 
 	// Factory bootloaders may leave the watchdog running. Do not feed it during
 	// a long press, preserving the button-held reset/bootloader escape route.

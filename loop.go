@@ -39,13 +39,9 @@ func (l *watchLoop) run() error {
 	}
 	for {
 		now := l.now()
-		if !now.Before(nextPower) {
+		if awake && !now.Before(nextPower) {
 			power = l.display.PowerStatus()
-			interval := powerPollInterval
-			if !awake {
-				interval = sleepPowerPollInterval
-			}
-			nextPower = now.Add(interval)
+			nextPower = now.Add(powerPollInterval)
 		}
 		if l.ui.tickTimers(now, l.state()) {
 			if err := wakeAlert(); err != nil {
@@ -86,7 +82,6 @@ func (l *watchLoop) run() error {
 		now = l.now()
 		if event.Kind == inputSleep {
 			awake = false
-			nextPower = now.Add(sleepPowerPollInterval)
 		}
 		if event.Kind == inputWake {
 			awake, painted = true, false

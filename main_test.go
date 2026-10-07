@@ -59,11 +59,11 @@ func TestEstimateBatteryPercent(t *testing.T) {
 	}{
 		{millivolts: 3400, want: 0},
 		{millivolts: 3500, want: 0},
-		{millivolts: 3550, want: 5},
-		{millivolts: 3650, want: 17},
-		{millivolts: 3725, want: 37},
-		{millivolts: 3825, want: 62},
-		{millivolts: 4040, want: 87},
+		{millivolts: 3550, want: 1},
+		{millivolts: 3650, want: 9},
+		{millivolts: 3725, want: 22},
+		{millivolts: 3825, want: 55},
+		{millivolts: 4040, want: 85},
 		{millivolts: 4180, want: 100},
 		{millivolts: 4300, want: 100},
 	}
@@ -71,6 +71,27 @@ func TestEstimateBatteryPercent(t *testing.T) {
 	for _, test := range tests {
 		if got := estimateBatteryPercent(test.millivolts); got != test.want {
 			t.Errorf("estimateBatteryPercent(%d) = %d, want %d", test.millivolts, got, test.want)
+		}
+	}
+}
+
+func TestBatteryCurveIsBoundedAndMonotonic(t *testing.T) {
+	var previous uint8
+	for mv := 0; mv <= 6000; mv++ {
+		percent := estimateBatteryPercent(uint16(mv))
+		if percent < previous || percent > 100 {
+			t.Fatalf("invalid estimate at %d mV: %d after %d", mv, percent, previous)
+		}
+		previous = percent
+	}
+	// Source dataset's light-load points, away from the fitted knots.
+	for _, sample := range []struct {
+		mv      uint16
+		percent int
+	}{{3998, 80}, {3861, 59}, {3792, 50}, {3753, 36}, {3704, 19}} {
+		got := int(estimateBatteryPercent(sample.mv))
+		if got < sample.percent-2 || got > sample.percent+2 {
+			t.Fatal("estimate departed from PineTime measurements", sample, got)
 		}
 	}
 }

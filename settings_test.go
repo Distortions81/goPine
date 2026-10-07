@@ -63,6 +63,34 @@ func TestSettingsWritesAreCoalescedAndPowerGated(t *testing.T) {
 	}
 }
 
+func TestSettingsCheckFreshPowerWithoutRetryDeadline(t *testing.T) {
+	f, j, _ := clockTestStorage(t)
+	now := time.Unix(0, 0)
+	u := newWatchUI(firmwareConfirmed)
+	p := loadSettings(&u, now, j)
+	reads, charged := 0, false
+	p.writePowerOK = func() bool { reads++; return charged }
+	u.touchWake = true
+	p.update(&u, now, true) // UI's cached battery says adequate power.
+	if reads != 0 {
+		t.Fatal("sampled before a write was due")
+	}
+	p.update(&u, now.Add(settingsSaveDelay), true)
+	if reads != 1 || f.writes != 0 || !p.deadline(true).IsZero() || p.failed {
+		t.Fatal("fresh low power was ignored or left a retry deadline", reads, f.writes)
+	}
+	// Sleep needs no retries. A later wake/charging event can resume the save.
+	charged = true
+	p.update(&u, now.Add(12*time.Hour), true)
+	if reads != 2 || f.writes == 0 || !p.deadline(true).IsZero() {
+		t.Fatal("deferred save did not resume after fresh power check")
+	}
+	p.update(&u, now.Add(13*time.Hour), true)
+	if reads != 2 {
+		t.Fatal("unchanged settings sampled battery")
+	}
+}
+
 func TestTouchWakePersistsBothChoices(t *testing.T) {
 	f, j, _ := clockTestStorage(t)
 	now := time.Unix(0, 0)

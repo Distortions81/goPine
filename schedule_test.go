@@ -79,7 +79,7 @@ func TestTimerDeadlinesWhileSleeping(t *testing.T) {
 	if got := nextLoopDelay(now, &u, now.Add(time.Second), true); got != 100*time.Millisecond {
 		t.Fatal("stopwatch missed tenth", got)
 	}
-	if got := nextLoopDelay(now, &u, now.Add(time.Second), false); got != time.Second {
+	if got := nextLoopDelay(now, &u, now.Add(time.Second), false); got != noDeadlineDelay {
 		t.Fatal("sleep kept repainting stopwatch", got)
 	}
 	u.timers.countdown = countdown{running: true, deadline: now.Add(25 * time.Millisecond)}
@@ -89,7 +89,24 @@ func TestTimerDeadlinesWhileSleeping(t *testing.T) {
 	u.timers.countdown.running = false
 	u.clock.initialized = false
 	u.timers.alarms[0] = alarm{enabled: true, next: now.Add(-time.Hour)}
-	if got := nextLoopDelay(now, &u, now.Add(time.Second), false); got != time.Second {
+	if got := nextLoopDelay(now, &u, now.Add(time.Second), false); got != noDeadlineDelay {
 		t.Fatal("unset clock scheduled calendar alarm", got)
+	}
+}
+
+func TestSleepingPagesDoNotScheduleDisplayWork(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 34, 59, 0, time.UTC)
+	for _, page := range []page{pageClock, pageUpdate, pageTimeSync, pageStopwatch} {
+		u := newWatchUI(firmwareConfirmed)
+		u.page = page
+		u.expires = now.Add(-time.Second)
+		if got := nextLoopDelay(now, &u, now.Add(-time.Hour), false); got != noDeadlineDelay {
+			t.Fatal("sleep retained screen deadline", page, got)
+		}
+		u.clock.initialized = true
+		u.timers.alarms[0] = alarm{enabled: true, next: u.clock.Now(now).Add(12 * time.Second)}
+		if got := nextLoopDelay(now, &u, now.Add(-time.Hour), false); got != 12*time.Second {
+			t.Fatal("sleep lost alarm deadline", page, got)
+		}
 	}
 }

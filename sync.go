@@ -24,6 +24,18 @@ func serviceTimeRadio() {
 	}
 }
 
+// A closed UI window may still have an asynchronous disconnect in flight.
+// Only the hardware bridge can tell us when longer sleep is safe.
+func timeRadioNeedsService() bool {
+	if activeTimeRadio == nil {
+		return false
+	}
+	if radio, ok := activeTimeRadio.(interface{ Busy() bool }); ok {
+		return radio.Busy()
+	}
+	return true
+}
+
 type timeSyncController struct {
 	radio   timeRadio
 	running bool

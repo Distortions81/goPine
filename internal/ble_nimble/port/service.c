@@ -197,11 +197,13 @@ void gopine_ble_stop(void) {
 }
 
 void gopine_ble_poll(void) {
-    if (!initialized) return;
+    if (!initialized || (!host_up && !stopping)) return;
     gopine_ble_pump();
     if (window && (int32_t)(ble_npl_time_get() - expires_at) >= 0) gopine_ble_stop();
     if (!window && host_up && !stopping) gopine_ble_stop();
 }
+
+int gopine_ble_busy(void) { return initialized && (host_up || stopping); }
 
 int gopine_ble_take(uint8_t *value, uint32_t *age) {
     if (!pending || !window) return 0;

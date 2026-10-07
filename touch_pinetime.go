@@ -22,18 +22,18 @@ type touchController struct {
 	asleep  bool
 }
 
-// TinyGo leaves TWI enabled after Tx. Touch is its only user; gate the
+// TinyGo leaves TWI enabled after Tx. All board sensors share this bus; gate the
 // peripheral around completed transactions, including failed accesses.
-type touchI2C struct{}
+type boardI2C struct{}
 
-func (touchI2C) Tx(addr uint16, w, r []byte) error {
+func (boardI2C) Tx(addr uint16, w, r []byte) error {
 	machine.I2C1.Bus.ENABLE.Set(nrf.TWI_ENABLE_ENABLE_Enabled)
 	err := machine.I2C1.Tx(addr, w, r)
 	machine.I2C1.Bus.ENABLE.Set(0)
 	return err
 }
 
-func (t *touchController) Configure() error {
+func configureBoardI2C() error {
 	if err := machine.I2C1.Configure(machine.I2CConfig{
 		Frequency: 100_000,
 		SDA:       machine.SDA_PIN,
@@ -42,11 +42,14 @@ func (t *touchController) Configure() error {
 		return err
 	}
 	machine.I2C1.Bus.ENABLE.Set(0)
+	return nil
+}
 
+func (t *touchController) Configure() error {
 	touchResetPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	resetTouchController(touchResetPin.Set, time.Sleep)
 
-	if err := configureTouchRegisters(touchI2C{}, time.Sleep); err != nil {
+	if err := configureTouchRegisters(boardI2C{}, time.Sleep); err != nil {
 		return err
 	}
 
@@ -61,7 +64,6 @@ func (t *touchController) enableInterrupt() error {
 	}); err != nil {
 		return err
 	}
-
 	t.ready = true
 	return nil
 }
@@ -91,7 +93,7 @@ func (t *touchController) Sleep() {
 	t.ready, t.asleep = false, true
 	t.pending.Set(0)
 	t.tracker = touchTracker{}
-	if err := sleepTouchController(touchI2C{}, touchResetPin.Set, time.Sleep); err != nil {
+	if err := sleepTouchController(boardI2C{}, touchResetPin.Set, time.Sleep); err != nil {
 		// A failed controller must not keep generating IRQs or wake the LCD.
 		// Hold reset until the next wake can try a fresh initialization.
 		touchResetPin.Low()
@@ -104,7 +106,7 @@ func (t *touchController) Wake() {
 	}
 	t.asleep = false
 	resetTouchController(touchResetPin.Set, time.Sleep)
-	if err := configureTouchRegisters(touchI2C{}, time.Sleep); err == nil {
+	if err := configureTouchRegisters(boardI2C{}, time.Sleep); err == nil {
 		_ = t.enableInterrupt()
 	}
 }
@@ -118,7 +120,7 @@ func (t *touchController) Poll() touchEvent {
 	t.pending.Set(0)
 	interrupt.Restore(state)
 
-	return t.tracker.poll(touchI2C{}, pending, time.Now())
+	return t.tracker.poll(boardI2C{}, pending, time.Now())
 }
 
 func (t *touchController) Close() {

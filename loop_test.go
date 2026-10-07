@@ -218,7 +218,7 @@ func TestScriptFailuresStopMotor(t *testing.T) {
 	}
 }
 
-func TestScriptSleepReducesPowerSamplesAndRefreshesOnWake(t *testing.T) {
+func TestScriptSleepDoesNotSamplePowerAndRefreshesOnWake(t *testing.T) {
 	d := newScriptDisplay()
 	u := newWatchUI(firmwareConfirmed)
 	u.touchWake = true // Restored setting must reach the display before Wait.
@@ -228,13 +228,13 @@ func TestScriptSleepReducesPowerSamplesAndRefreshesOnWake(t *testing.T) {
 				t.Fatal("saved touch wake setting not applied")
 			}
 		}},
-		{at: 61200 * time.Millisecond, event: inputEvent{Kind: inputWake}, check: func() {
-			if d.powerReads != 3 {
-				t.Fatalf("got %d power samples during 61s sleep, want boot + two", d.powerReads)
+		{at: 12*time.Hour + 200*time.Millisecond, event: inputEvent{Kind: inputWake}, check: func() {
+			if d.powerReads != 1 {
+				t.Fatalf("got %d power samples during 12h sleep, want boot only", d.powerReads)
 			}
 		}},
-		{at: 61300 * time.Millisecond, event: inputEvent{Kind: inputQuit}, check: func() {
-			if d.powerReads != 4 {
+		{at: 12*time.Hour + 300*time.Millisecond, event: inputEvent{Kind: inputQuit}, check: func() {
+			if d.powerReads != 2 {
 				t.Fatal("wake did not refresh battery")
 			}
 		}},
@@ -242,16 +242,17 @@ func TestScriptSleepReducesPowerSamplesAndRefreshesOnWake(t *testing.T) {
 	if err := runScript(t, d, &u, &fakeTimeRadio{}); err != nil {
 		t.Fatal(err)
 	}
-	if d.waits > 8 {
+	if d.waits != 3 {
 		t.Fatal("idle sleep kept waking the application loop", d.waits)
 	}
 }
 
-func TestScriptTouchSettingSavesBeforeSleepingPowerPoll(t *testing.T) {
+func TestScriptTouchSettingSavesWithoutPeriodicPowerPoll(t *testing.T) {
 	d := newScriptDisplay()
 	u := newWatchUI(firmwareConfirmed)
 	_, j, _ := clockTestStorage(t)
 	p := loadSettings(&u, d.now, j)
+	p.writePowerOK = func() bool { return updatePowerOK(d.PowerStatus()) }
 	d.steps = []scriptStep{
 		{event: inputEvent{Kind: inputSwipeLeft}},
 		{at: 100 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 120, Y: 195}},
@@ -263,10 +264,10 @@ func TestScriptTouchSettingSavesBeforeSleepingPowerPoll(t *testing.T) {
 		{at: 2200 * time.Millisecond, event: inputEvent{Kind: inputQuit}, check: func() {
 			r, ok := j.Latest()
 			if !ok || !r.Settings.TouchWake {
-				t.Fatal("sleep delayed saving touch wake until battery poll")
+				t.Fatal("sleep lost the pending settings save")
 			}
-			if d.powerReads != 1 {
-				t.Fatal("save deadline unnecessarily sampled battery")
+			if d.powerReads != 2 {
+				t.Fatal("save must sample power once at the write boundary")
 			}
 		}},
 	}

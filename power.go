@@ -19,12 +19,15 @@ type batteryPoint struct {
 	percent    uint8
 }
 
+// PineTime measurements from three watches, fitted by Finlay Davidson and
+// adopted in InfiniTime commit 8b0d888952bb3cfbf587ab20d5096f2e578a6107.
+// See docs/power.md for the dataset, methodology, and estimation limits.
 var batteryCurve = [...]batteryPoint{
 	{millivolts: 3500, percent: 0},
-	{millivolts: 3600, percent: 10},
-	{millivolts: 3700, percent: 25},
-	{millivolts: 3750, percent: 50},
-	{millivolts: 3900, percent: 75},
+	{millivolts: 3616, percent: 3},
+	{millivolts: 3723, percent: 22},
+	{millivolts: 3776, percent: 48},
+	{millivolts: 3979, percent: 79},
 	{millivolts: 4180, percent: 100},
 }
 

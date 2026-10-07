@@ -26,6 +26,35 @@ func (f *fakeTimeRadio) Service() {}
 func (f *fakeTimeRadio) Take() ([10]byte, int, time.Duration, error) {
 	return f.value, f.size, f.age, f.err
 }
+
+type drainingTimeRadio struct {
+	fakeTimeRadio
+	draining bool
+}
+
+func (f *drainingTimeRadio) Stop()      { f.draining = true }
+func (f *drainingTimeRadio) Busy() bool { return f.draining }
+func (f *drainingTimeRadio) Service()   { f.draining = false }
+
+func TestIdleWaitMustFinishRadioShutdown(t *testing.T) {
+	previous := activeTimeRadio
+	defer func() { activeTimeRadio = previous }()
+	f := &drainingTimeRadio{}
+	activeTimeRadio = f
+	c := timeSyncController{radio: f, running: true}
+	c.close()
+	if c.running || !timeRadioNeedsService() {
+		t.Fatal("closed UI allowed sleep before radio stopped")
+	}
+	serviceTimeRadio()
+	if timeRadioNeedsService() {
+		t.Fatal("stopped radio prevents longer sleep")
+	}
+	activeTimeRadio = unavailableTimeRadio{}
+	if timeRadioNeedsService() {
+		t.Fatal("non-BLE build prevents longer sleep")
+	}
+}
 func syncUI(now time.Time) watchUI {
 	u := newWatchUI(firmwareConfirmed)
 	u.page = pageTimeSettings

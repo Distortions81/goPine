@@ -19,8 +19,9 @@ func (pineTimeRadio) Start(value [10]byte, battery uint8) error {
 	}
 	return nil
 }
-func (pineTimeRadio) Stop()    { ble.Stop() }
-func (pineTimeRadio) Service() { ble.Service() }
+func (pineTimeRadio) Stop()      { ble.Stop() }
+func (pineTimeRadio) Service()   { ble.Service() }
+func (pineTimeRadio) Busy() bool { return ble.Busy() }
 func (pineTimeRadio) Take() ([10]byte, int, time.Duration, error) {
 	value, size, age := ble.Take()
 	var err error

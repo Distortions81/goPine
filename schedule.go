@@ -3,10 +3,10 @@ package main
 import "time"
 
 const (
-	minimumLoopWait        = time.Millisecond
-	powerPollInterval      = time.Second
-	sleepPowerPollInterval = 30 * time.Second
-	timeSyncPollInterval   = 50 * time.Millisecond
+	minimumLoopWait      = time.Millisecond
+	powerPollInterval    = time.Second
+	noDeadlineDelay      = time.Duration(1<<63 - 1)
+	timeSyncPollInterval = 50 * time.Millisecond
 )
 
 // wakeSchedule collects deadlines from otherwise independent subsystems. This
@@ -36,12 +36,15 @@ func (s wakeSchedule) delay() time.Duration {
 }
 
 func nextLoopDelay(now time.Time, u *watchUI, nextPower time.Time, awake bool) time.Duration {
-	schedule := newWakeSchedule(now, nextMinuteDelay(u.clock.Now(now)))
-	schedule.by(nextPower)
-	if u.page == pageUpdate {
+	schedule := newWakeSchedule(now, noDeadlineDelay)
+	if awake {
+		schedule.by(nextPower)
+		schedule.after(nextMinuteDelay(u.clock.Now(now)))
+	}
+	if awake && u.page == pageUpdate {
 		schedule.by(u.expires)
 	}
-	if u.page == pageTimeSync {
+	if awake && u.page == pageTimeSync {
 		schedule.after(timeSyncPollInterval)
 	}
 	u.scheduleTimers(&schedule, awake)

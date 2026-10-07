@@ -1,0 +1,102 @@
+name: OTA release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ota-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read release version and commit date
+        run: |
+          version=$(python3 scripts/release_assets.py version "$GITHUB_REF_NAME")
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          epoch=$(git show -s --format=%ct HEAD)
+          echo "FIRMWARE_DATE=$(date -u -d "@$epoch" +%Y-%m-%d)" >> "$GITHUB_ENV"
+          echo "FIRMWARE_TIME=$(date -u -d "@$epoch" +%H:%M:%S)" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: acifani/setup-tinygo@v3
+        with:
+          tinygo-version: '0.42.0'
+          install-binaryen: 'false'
+      - uses: actions/checkout@v7
+        with:
+          repository: InfiniTimeOrg/InfiniTime
+          ref: 6c119eb52206b580b556b41633dddc1e1b66a8da
+          path: build/deps/InfiniTime
+          persist-credentials: false
+      - name: Install build and test dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libsdl2-dev clang llvm
+      - name: Test application and host tools
+        run: |
+          go test ./...
+          go vet ./...
+          go mod tidy -diff
+          python3 scripts/test_sync_time.py
+          python3 scripts/test_check_resources.py
+          python3 scripts/test_ota_update.py
+          python3 scripts/test_release_assets.py
+          python3 scripts/test-ble-port.py --infinitime build/deps/InfiniTime
+      - name: Initialize TinyGo libc headers
+        run: tinygo build -target=./targets/pinetime-gopine.json -o build/toolchain-check.elf .
+      - name: Build BLE OTA firmware and enforce memory budgets
+        run: bash scripts/build-ota.sh --ble "$VERSION"
+      - name: Validate and stage release assets
+        run: |
+          python3 scripts/release_assets.py stage "$GITHUB_REF_NAME" \
+            --commit "$(git rev-parse HEAD)" --repository "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ota-release
+          path: build/release/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ota-release
+          path: release
+      - name: Publish checked OTA assets
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sha256sum --check SHA256SUMS
+          # Upload into a draft first so a failed upload cannot publish a partial release.
+          # A retry may finish a draft, but must never replace published firmware.
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft); then
+            if [[ $draft != true ]]; then
+              echo 'Release is already published; use a new version tag for changed firmware.' >&2
+              exit 1
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
+              --title "goPine ${GITHUB_REF_NAME#v}" --notes-file INSTALL.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" gopine-dfu-*.zip \
+            gopine-resources-*.json build-info.json INSTALL.md SHA256SUMS --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false

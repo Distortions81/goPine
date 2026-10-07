@@ -41,6 +41,9 @@ sudo apt install libsdl2-dev
 ## PineTime firmware
 
 For **Bluetooth OTA with on-watch confirmation**, see [OTA setup](docs/ota.md).
+Download the firmware ZIP from [GitHub Releases](https://github.com/Distortions81/goPineTime/releases)
+to update without compiling. Releases are built and checked automatically from
+version tags; [release instructions](docs/ota.md#automated-tagged-releases) describe publishing.
 Use `bash scripts/ota-update.sh VERSION` to build and upload, or add `--web`
 for local browser controls. Preparation finishes before you enter recovery;
 the uploader connects directly to the saved watch address.

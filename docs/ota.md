@@ -8,6 +8,65 @@ KEEP/REVERT, and re-entry to recovery after KEEP have been verified on this watc
 Persistence across an ordinary reboot after KEEP and power-loss behavior still
 need hardware verification.
 
+## Download a release
+
+[GitHub Releases](https://github.com/Distortions81/goPineTime/releases) provides
+`gopine-dfu-VERSION.zip`, `SHA256SUMS`, installation instructions, build metadata,
+and a memory-budget report. Download the firmware ZIP, not GitHub's automatically
+generated source-code archives. The ZIP contains only the goPine application for
+an existing compatible MCUboot/InfiniTime recovery installation.
+
+Download `SHA256SUMS` alongside the ZIP and verify it on Linux:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+Send the ZIP with a compatible firmware/Legacy DFU companion tool, or use this
+repository's Linux updater with `--package` (no Go/TinyGo needed):
+
+```sh
+bash scripts/ota-update.sh 0.3.4 --package /path/to/gopine-dfu-0.3.4.zip --web \
+  --adapter hci1 --address YOUR_RECOVERY_MAC
+```
+
+Substitute the downloaded version, your adapter and recovery address. Python 3
+with venv, Git, and BlueZ/gatttool are still needed. Follow the recovery and KEEP
+steps below. Published builds use the source commit's UTC date/time as their
+initial clock fallback; set or sync local time after installation if needed.
+
+## Automated tagged releases
+
+After committing and pushing the intended source, create and push an annotated
+version tag. For example, the next release after 0.3.4:
+
+```sh
+git tag -a v0.3.5 -m 'goPine 0.3.5'
+git push origin v0.3.5
+```
+
+The **OTA release** workflow runs on `v*` tag pushes. It accepts
+`vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH+BUILD` within MCUboot's numeric
+version limits; prerelease suffixes and leading zeros are rejected. The tag's
+version is embedded in both the displayed firmware version and MCUboot header.
+Add optional release-specific notes in `docs/releases/VERSION.md` before tagging;
+they appear above the generated installation instructions.
+
+The workflow runs host tests/vet, the BLE sanitizer checks, a TinyGo 0.42.0 build
+using the pinned InfiniTime port, the linked-image memory gate, and ZIP/hash/CRC
+validation. It publishes only after all checks pass. The publish job creates a
+draft, uploads the OTA ZIP, checksums, installation notes, provenance and memory
+report, then publishes the release. A failed upload can be retried from Actions;
+an already published release is never overwritten. Use a new tag for changed
+firmware; do not move published tags. Create the tag to trigger this workflow,
+rather than manually publishing an empty GitHub release first.
+
+Only the publish job receives repository write permission. No personal access
+token is needed. This workflow produces application-only OTA assets; wired
+bootstrap images are deliberately excluded. Automated checks do not establish
+device boot, KEEP, wake reliability or battery life. The earlier locally tested
+0.3.4 package recorded below has a different build clock/hash from the CI release.
+
 ## Build and update with one command (Linux)
 
 Install Python 3 with venv support, Git, Go (the version in `go.mod`), TinyGo

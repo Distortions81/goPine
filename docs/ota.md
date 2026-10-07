@@ -558,3 +558,44 @@ Package: `build/ota/gopine-dfu-0.3.4.zip`; SHA-256:
 `6bb8616b65bfe1caa6941fb71b0a71ca120b5a1847637f7749a991333c0305b0`.
 Host tests, standalone/BLE builds, the resource gate, and BLE port sanitizer
 checks passed. Transfer log: `build/ota/gopine-upload-0.3.4.log`.
+
+<!-- recovery-reference -->
+## Recovery reference: red, green and blue
+
+These are **pinecone colors during boot**, selected with the **physical side
+button**. They apply to the stock InfiniTime MCUboot bootloader (including
+1.0.1 used here), not the on-screen goPine update button.
+
+| Color | How to select it | What it does |
+| --- | --- | --- |
+| **Green — normal boot** | Leave the side button released while the pinecone fills. | Runs the installed application, applying a pending update or automatic trial rollback if needed. |
+| **Blue — rollback** | Hold during the pinecone animation; release when it turns blue, before red. | Requests the firmware in the previous/secondary slot, even after KEEP. |
+| **Red — recovery** | Keep holding past blue; release when the pinecone turns red. | Restores the stored InfiniTime recovery firmware for a new Bluetooth OTA upload. |
+
+To reach this screen from a running or stuck application, hold the side button
+until the watch restarts. For blue/red, keep holding into the pinecone animation,
+then release at the desired color. For normal boot, release as it restarts.
+Follow the colors rather than counting seconds. After red, allow the restore,
+possible backlight flashes and automatic restart to finish with the button
+released. Do not interrupt an active restore or firmware transfer.
+
+**Blue is not a guaranteed way back to the previous goPine.** It can only use
+what remains in the secondary slot. goPine updates run through recovery, so the
+fallback is normally recovery. Red recovery and new uploads reuse that slot;
+an overwritten goPine image cannot be recovered with blue. The blue gesture is
+documented upstream but has not been validated as a cancel path on this watch.
+
+If the watch already shows **InfiniTime recovery**, prepare the uploader first,
+keep it near the Bluetooth adapter, disconnect phone apps, then upload the
+application DFU ZIP. If connection fails before transfer starts, reboot recovery
+and connect immediately; allow green to boot the already-installed recovery.
+Recovery has no on-screen Cancel/Back. After receiver validation and activation,
+check the watch before retrying: if goPine boots, tap **KEEP**. **REVERT**, or a
+reset before KEEP, returns to the available fallback.
+
+If the screen stays blank, charge the watch and try the side-button restart.
+If red cannot start recovery, Bluetooth OTA alone may not repair it; see the
+repository's [wired setup instructions](https://github.com/Distortions81/goPineTime/blob/main/docs/ota.md#one-time-wired-setup-standalone-gopine-to-mcuboot).
+
+Sources: [stock bootloader 1.0.1 boot flow](https://github.com/InfiniTimeOrg/pinetime-mcuboot-bootloader/blob/1.0.1/README.md#boot-flow)
+and [button/restore implementation](https://github.com/InfiniTimeOrg/pinetime-mcuboot-bootloader/blob/1.0.1/libs/pinetime_boot/src/pinetime_boot.c).

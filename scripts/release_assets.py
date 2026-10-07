@@ -83,6 +83,10 @@ local time after installation if necessary.
 Source: `{commit}`. Built with TinyGo 0.42.0 and the pinned InfiniTime BLE port.
 See build-info.json for provenance and {report.name} for memory-budget results.
 '''
+    # Keep the recovery reference last in both release notes and INSTALL.md.
+    ota_docs = pathlib.Path(__file__).resolve().parents[1] / 'docs/ota.md'
+    recovery = ota_docs.read_text().split('<!-- recovery-reference -->\n', 1)[1]
+    notes += '\n' + recovery
     (output / 'INSTALL.md').write_text(notes)
     sums = [f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
             for p in sorted(output.iterdir())]

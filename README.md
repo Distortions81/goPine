@@ -187,3 +187,26 @@ measurement of free runtime heap. See [resource audit](docs/timers.md#failed-030
 python3 scripts/test_check_resources.py
 python3 scripts/check-resources.py build/ota/gopine-0.3.1.elf
 ```
+
+## Recovery: red, green and blue
+
+The stock InfiniTime bootloader uses pinecone colors and the **physical side
+button** to choose what boots:
+
+| Color | Button action during the pinecone animation | Result |
+| --- | --- | --- |
+| **Green** | Leave the button released. | Normal boot, including any pending update or automatic trial rollback. |
+| **Blue** | Hold, then release at blue before it turns red. | Request rollback to the firmware still in the secondary slot. |
+| **Red** | Hold past blue, then release at red. | Restore InfiniTime recovery so you can upload firmware over Bluetooth. |
+
+Hold the side button until the watch restarts to reach the bootloader. Keep
+holding into the animation for blue/red, or release as it restarts for green.
+After red, leave the button released and let restoration/restart finish.
+
+**Blue cannot restore an overwritten goPine version.** With recovery-based OTA,
+the fallback is normally recovery; red recovery and new uploads reuse the
+secondary slot. Recovery has no on-screen Cancel/Back. Prepare the uploader
+before entering recovery, connect promptly, and tap **KEEP** after goPine boots.
+
+See the [full recovery reference](docs/ota.md#recovery-reference-red-green-and-blue)
+for connection failures, blank screens, rollback limits, and upstream sources.

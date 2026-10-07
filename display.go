@@ -22,6 +22,7 @@ type clockDisplay interface {
 	Wait(time.Duration) (inputEvent, error)
 	Wake() error
 	KeepAwake()
+	SetTouchWake(bool)
 	SetVibration(bool)
 	Close() error
 }

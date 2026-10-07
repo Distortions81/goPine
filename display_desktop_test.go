@@ -12,6 +12,63 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
+func TestDesktopTouchWakeChoice(t *testing.T) {
+	t.Setenv("SDL_VIDEODRIVER", "dummy")
+	display, err := openDisplay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer display.Close()
+	d := display.(*desktopDisplay)
+	click := func(kind uint32) {
+		// SDL copies the full event union, so provide enough backing storage.
+		e := struct {
+			event   sdl.MouseButtonEvent
+			padding [64]byte
+		}{event: sdl.MouseButtonEvent{Type: kind, Button: sdl.BUTTON_LEFT, X: 120, Y: 195}}
+		if _, err := sdl.PushEvent(&e.event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.asleep = true
+	click(sdl.MOUSEBUTTONDOWN)
+	click(sdl.MOUSEBUTTONUP)
+	if e, err := d.Wait(20 * time.Millisecond); err != nil || e.Kind != inputRefresh || !d.asleep {
+		t.Fatal("touch woke by default", e, err)
+	}
+	button := struct {
+		event   sdl.KeyboardEvent
+		padding [64]byte
+	}{event: sdl.KeyboardEvent{Type: sdl.KEYDOWN, Keysym: sdl.Keysym{Sym: sdl.K_SPACE}}}
+	if _, err := sdl.PushEvent(&button.event); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := d.Wait(100 * time.Millisecond); err != nil || e.Kind != inputWake || d.asleep {
+		t.Fatal("button cannot wake with touch wake off", e, err)
+	}
+	click(sdl.MOUSEBUTTONDOWN)
+	click(sdl.MOUSEBUTTONUP)
+	for _, want := range []inputKind{inputPress, inputTap} {
+		if e, err := d.Wait(100 * time.Millisecond); err != nil || e.Kind != want {
+			t.Fatal("touch is disabled while awake", e, err)
+		}
+	}
+	d.asleep = true
+	d.SetTouchWake(true)
+	click(sdl.MOUSEBUTTONDOWN)
+	click(sdl.MOUSEBUTTONUP)
+	if e, err := d.Wait(100 * time.Millisecond); err != nil || e.Kind != inputWake || d.asleep {
+		t.Fatal("opt-in touch did not wake", e, err)
+	}
+	if e, err := d.Wait(100 * time.Millisecond); err != nil || e.Kind == inputTap {
+		t.Fatal("wake tap activated a control", e, err)
+	}
+	d.asleep = true
+	if err := d.Wake(); err != nil || d.asleep {
+		t.Fatal("automatic alert wake failed", err)
+	}
+}
+
 // Exercise SDL's actual input and rendering paths without a desktop session.
 // Optional screenshots are useful when changing the 240x240 layout.
 func TestDesktopControlsAndRendering(t *testing.T) {
@@ -34,6 +91,8 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		{"clock-low", watchUI{page: pageClock}, powerStatus{Percent: 9}},
 		{"clock-24h", watchUI{page: pageClock, use24: true}, powerStatus{Percent: 73}},
 		{"settings", watchUI{page: pageSettings}, powerStatus{Percent: 73}},
+		{"settings-touch-on", watchUI{page: pageSettings, touchWake: true}, powerStatus{Percent: 73}},
+		{"settings-pending", watchUI{page: pageSettings, settingsNote: "Save pending"}, powerStatus{Percent: 73}},
 		{"time-settings", watchUI{page: pageTimeSettings}, powerStatus{Percent: 73}},
 		{"set-time", watchUI{page: pageSetTime, edit: clockEdit{hour: 12, minute: 34}}, powerStatus{Percent: 73}},
 		{"set-time-24h", watchUI{page: pageSetTime, use24: true, edit: clockEdit{hour: 23, minute: 59}}, powerStatus{Percent: 73}},

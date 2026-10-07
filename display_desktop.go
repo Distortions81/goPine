@@ -19,6 +19,7 @@ type desktopDisplay struct {
 	pointerDown        bool
 	pointerX, pointerY int16
 	asleep             bool
+	touchWake          bool
 	vibrating          bool
 }
 
@@ -122,6 +123,8 @@ func (d *desktopDisplay) Wake() error {
 
 func (d *desktopDisplay) KeepAwake() {}
 
+func (d *desktopDisplay) SetTouchWake(enabled bool) { d.touchWake = enabled }
+
 func (d *desktopDisplay) SetVibration(on bool) {
 	if d.vibrating == on {
 		return
@@ -165,7 +168,7 @@ func (d *desktopDisplay) Wait(duration time.Duration) (inputEvent, error) {
 					continue
 				}
 				if d.asleep {
-					if e.Type == sdl.MOUSEBUTTONDOWN {
+					if d.touchWake && e.Type == sdl.MOUSEBUTTONDOWN {
 						_ = d.Wake()
 						return inputEvent{Kind: inputWake}, nil
 					}

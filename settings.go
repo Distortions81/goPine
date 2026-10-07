@@ -19,7 +19,7 @@ func calendarMillis(local time.Time) int64 {
 }
 
 func (u *watchUI) settings() checkpoint.Settings {
-	s := checkpoint.Settings{CountdownSeconds: uint32(u.timers.countdown.preset / time.Second)}
+	s := checkpoint.Settings{CountdownSeconds: uint32(u.timers.countdown.preset / time.Second), TouchWake: u.touchWake}
 	for i, a := range u.timers.alarms {
 		s.Alarms[i] = checkpoint.Alarm{Hour: uint8(a.hour), Minute: uint8(a.minute), Repeat: uint8(a.repeat), Enabled: a.enabled}
 	}
@@ -208,6 +208,7 @@ func loadSettings(u *watchUI, now time.Time, j *checkpoint.Journal) *settingsPer
 	if j != nil {
 		if r, ok := j.Latest(); ok && r.HasSettings {
 			u.use24 = r.Use24
+			u.touchWake = r.Settings.TouchWake
 			for i, a := range r.Settings.Alarms {
 				u.timers.alarms[i] = alarm{hour: int(a.Hour), minute: int(a.Minute), repeat: alarmRepeat(a.Repeat), enabled: a.Enabled}
 			}
@@ -242,6 +243,14 @@ func (p *settingsPersistence) update(u *watchUI, now time.Time, allowed bool) {
 	if allowed && now.Sub(p.changedAt) >= settingsSaveDelay {
 		p.flush(u, now, true)
 	}
+}
+
+// A pending edit must still save promptly when sleep reduces battery polling.
+func (p *settingsPersistence) deadline(allowed bool) time.Time {
+	if allowed && p.journal != nil && !p.failed && p.observed != p.saved {
+		return p.changedAt.Add(settingsSaveDelay)
+	}
+	return time.Time{}
 }
 
 func (p *settingsPersistence) flush(u *watchUI, now time.Time, allowed bool) bool {

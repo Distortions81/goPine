@@ -50,6 +50,7 @@ type watchUI struct {
 	expires      time.Time
 	message      string
 	use24        bool
+	touchWake    bool
 	holding      bool
 	holdSince    time.Time
 	holdStep     int
@@ -204,8 +205,8 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 					u.page, u.expires = pageUpdate, now.Add(30*time.Second)
 				}
 			}
-		} else if inRect(e, 40, 174, 200, 218) {
-			u.home(state)
+		} else if inRect(e, 16, 174, 224, 218) {
+			u.touchWake = !u.touchWake
 		}
 	case pageMessage:
 		if inRect(e, 40, 174, 200, 218) {
@@ -361,21 +362,25 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		centered(d, &uifont.Bold18, 86, "TIME & DATE", white)
 		gfx.RoundBox(d, 16, 120, 208, 48, 6, card)
 		centered(d, &uifont.Bold18, 150, "FIRMWARE UPDATE", accent)
-		drawButton(d, 40, 160, "BACK", false)
+		label := "Touch to wake: Off"
+		if u.touchWake {
+			label = "Touch to wake: On"
+		}
+		drawButton(d, 16, 208, label, u.touchWake)
 		return
 	}
 	centered(d, &uifont.Regular18, 29, "goPine "+firmwareVersion, muted)
 	switch u.page {
 	case pageUpdate:
 		centered(d, &uifont.Bold24, 64, "Install update", white)
-		drawLines(d, "Restart into update mode.")
+		centered(d, &uifont.Regular18, 88, "Hold to restart", muted)
+		remaining := 30 - u.holdStep
+		countdown := decimal(remaining/10) + "." + decimal(remaining%10) + "s"
+		centered(d, &uifont.Bold24, 122, countdown, accent)
+		gfx.FillBox(d, 30, 134, 180, 3, card)
+		gfx.FillBox(d, 30, 134, int16(u.holdStep)*180/30, 3, accent)
 		centered(d, &uifont.Regular18, 159, "Swipe back to cancel", muted)
-		label := "HOLD 3 SECONDS"
-		if u.holding {
-			label = "HOLD " + decimal((30-u.holdStep)/10) + "." + decimal((30-u.holdStep)%10) + "s"
-		}
-		drawButton(d, 24, 192, label, true)
-		gfx.FillBox(d, 30, 210, int16(u.holdStep)*180/30, 3, accent)
+		drawButton(d, 24, 192, "PRESS AND HOLD", true)
 	case pageTrial:
 		centered(d, &uifont.Bold24, 64, "Keep this build?", white)
 		drawLines(d, "Keep this version or restart to go back.")

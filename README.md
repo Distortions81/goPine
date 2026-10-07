@@ -4,7 +4,7 @@ goPine is a digital clock with alarms, stopwatch, and countdown for the PineTime
 with [TinyGo](https://tinygo.org/). It also includes an SDL2 desktop simulator
 that uses the same clock and font rendering code as the watch build.
 
-Version **0.3.2** is installed and confirmed with KEEP on the watch. See the
+Version **0.3.3** is installed and confirmed with KEEP on the watch. See the
 [roadmap](docs/roadmap.md) for completed work, remaining hardware checks, and
 the next CPU, drawing and power optimization priorities.
 
@@ -77,7 +77,7 @@ clock when reopening sync. The 0.2.7 compatibility work also exposes the standar
 Battery Service that InfiniLink uses to finish its connected state. InfiniLink's
 **Developer → Force ANCS** option must be off: goPine does not implement ANCS,
 Bluetooth security, bonding, notifications, or a persistent companion connection.
-The installed 0.3.2 build includes this compatibility work and the clock tools below;
+The installed 0.3.3 build includes this compatibility work and the clock tools below;
 repeated sync windows and InfiniLink still need focused hardware tests.
 Bluetooth stays off outside that explicit sync window. See [time sync](docs/time.md).
 The planned-reset handoff still needs dedicated hardware testing.
@@ -90,9 +90,14 @@ prove the battery is full). The clock omits redundant power-status text and
 gesture hints; a small AM/PM sits beside the time on the same baseline.
 The estimate still comes from
 battery voltage, not a calibrated fuel gauge. The display and backlight turn off after
-15 seconds. Tap the screen to wake it or extend that timeout. Press the side
-button to wake the screen or turn it off immediately; a long press still allows
-a bootloader watchdog reset.
+15 seconds. **Settings → Touch to wake** defaults to **Off** to save battery;
+the touch controller sleeps with the screen. Press the side button to wake the
+screen or turn it off immediately; a long press still allows a bootloader
+watchdog reset. Enable Touch to wake to also wake with a screen tap. Touch works
+normally while the screen is on and extends its timeout. Alarms and countdowns
+wake the screen with either setting. The choice persists alongside other settings
+in MCUboot builds and simulators configured with storage. See the
+[sleep power audit](docs/power.md) for remaining background activity and hardware checks.
 
 Swipe **left** on the clock to open Settings; swipe **right** or use Back to
 return. **Time & Date** includes **Set Time**, **Set Date**, and a 12/24-hour
@@ -119,7 +124,8 @@ calendar alarms wait for time/date setup. See [clock tools and persistence](docs
 for controls, reboot behavior, storage migration, and tests.
 
 Settings also includes **Firmware Update**. To enter Bluetooth recovery,
-press and hold **HOLD 3 SECONDS** until the countdown finishes. Releasing early,
+press and hold **PRESS AND HOLD** until the three-second countdown above the
+button finishes. Its progress bar also stays above your finger. Releasing early,
 dragging away, a touch error, or sleep cancels the hold. Back/swipe-right cancels
 the prompt before recovery starts; this does not add a Back button to recovery.
 The prompt expires after 30 seconds and requires at least 20% battery or power.

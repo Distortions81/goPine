@@ -3,9 +3,10 @@ package main
 import "time"
 
 const (
-	minimumLoopWait      = time.Millisecond
-	powerPollInterval    = time.Second
-	timeSyncPollInterval = 50 * time.Millisecond
+	minimumLoopWait        = time.Millisecond
+	powerPollInterval      = time.Second
+	sleepPowerPollInterval = 30 * time.Second
+	timeSyncPollInterval   = 50 * time.Millisecond
 )
 
 // wakeSchedule collects deadlines from otherwise independent subsystems. This

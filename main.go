@@ -82,8 +82,10 @@ func openApplication() (*watchApplication, error) {
 
 	loop := watchLoop{display: display, ui: &ui, sync: &syncController, renderer: &renderer,
 		now: time.Now, state: firmwareState}
-	loop.save = func(now time.Time, power powerStatus) {
-		settings.update(&ui, now, updatePowerOK(power) && !syncController.running && !ui.timers.active && firmwareState() == firmwareConfirmed)
+	loop.save = func(now time.Time, power powerStatus) time.Time {
+		allowed := updatePowerOK(power) && !syncController.running && !ui.timers.active && firmwareState() == firmwareConfirmed
+		settings.update(&ui, now, allowed)
+		return settings.deadline(allowed)
 	}
 	loop.action = func(action uiAction) {
 		switch action {
@@ -133,6 +135,7 @@ type frameKey struct {
 	power                                    chargeState
 	use24, holding, approximate, initialized bool
 	syncOpen, syncPending                    bool
+	touchWake                                bool
 }
 
 // Keep calendar temporaries out of the long-lived event loop frame.
@@ -140,7 +143,7 @@ type frameKey struct {
 //go:noinline
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 	key := frameKey{page: u.page, message: u.message, settingsNote: u.settingsNote,
-		use24: u.use24, holding: u.holding, step: u.holdStep, edit: u.edit,
+		use24: u.use24, touchWake: u.touchWake, holding: u.holding, step: u.holdStep, edit: u.edit,
 		approximate: u.clock.approximate, initialized: u.clock.initialized,
 		percent: power.Percent, power: power.State, timer: u.timerFrameKey(now)}
 	if u.page == pageClock || u.page == pageAlert {

@@ -17,6 +17,7 @@ func TestSettingsWritesAreCoalescedAndPowerGated(t *testing.T) {
 		t.Fatal("idle boot wrote flash")
 	}
 	u.use24 = true
+	u.touchWake = true
 	p.update(&u, now, true)
 	u.timers.countdown.preset = 10 * time.Minute
 	p.update(&u, now.Add(time.Second), true)
@@ -48,7 +49,7 @@ func TestSettingsWritesAreCoalescedAndPowerGated(t *testing.T) {
 	}
 	loaded := newWatchUI(firmwareConfirmed)
 	loadSettings(&loaded, now.Add(10*time.Second), j)
-	if !loaded.use24 || loaded.timers.countdown.preset != 10*time.Minute || !loaded.timers.watch.running {
+	if !loaded.use24 || !loaded.touchWake || loaded.timers.countdown.preset != 10*time.Minute || !loaded.timers.watch.running {
 		t.Fatal("settings did not restore")
 	}
 	f.fail = true
@@ -59,6 +60,34 @@ func TestSettingsWritesAreCoalescedAndPowerGated(t *testing.T) {
 	p.update(&u, now.Add(2*time.Hour), true)
 	if !p.failed || f.writes != writes {
 		t.Fatal("uncertain flash save was retried")
+	}
+}
+
+func TestTouchWakePersistsBothChoices(t *testing.T) {
+	f, j, _ := clockTestStorage(t)
+	now := time.Unix(0, 0)
+	u := newWatchUI(firmwareConfirmed)
+	p := loadSettings(&u, now, j)
+	for _, enabled := range []bool{true, false} {
+		u.touchWake = enabled
+		p.update(&u, now, true)
+		if p.deadline(true) != now.Add(settingsSaveDelay) || !p.deadline(false).IsZero() {
+			t.Fatal("save deadline ignores delay or power gate")
+		}
+		p.update(&u, now.Add(settingsSaveDelay), true)
+		if !p.deadline(true).IsZero() {
+			t.Fatal("saved settings keep waking the loop")
+		}
+		reopened, err := checkpoint.Open(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := newWatchUI(firmwareConfirmed)
+		loadSettings(&v, now, reopened)
+		if v.touchWake != enabled {
+			t.Fatalf("touch wake after reboot = %v, want %v", v.touchWake, enabled)
+		}
+		now = now.Add(time.Minute)
 	}
 }
 

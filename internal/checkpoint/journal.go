@@ -48,6 +48,7 @@ type Alarm struct {
 type Settings struct {
 	Alarms           [5]Alarm
 	CountdownSeconds uint32
+	TouchWake        bool
 }
 
 // Runtime timestamps are local calendar fields encoded as Unix milliseconds,
@@ -280,6 +281,10 @@ func encode(r Record) [RecordSize]byte {
 		binary.LittleEndian.PutUint32(b[120+i*4:124+i*4], v)
 	}
 	binary.LittleEndian.PutUint32(b[140:144], rt.AlertMillis)
+	// Previously reserved zero byte: existing records default to touch wake off.
+	if r.Settings.TouchWake {
+		b[144] = 1
+	}
 	binary.LittleEndian.PutUint32(b[RecordSize-8:RecordSize-4], crc32.ChecksumIEEE(b[:RecordSize-8]))
 	binary.LittleEndian.PutUint32(b[RecordSize-4:], recordCommit)
 	return b
@@ -310,8 +315,9 @@ func decode(b *[RecordSize]byte) (Record, bool) {
 		r.Runtime.SnoozeMillis[i] = binary.LittleEndian.Uint32(b[120+i*4 : 124+i*4])
 	}
 	r.Runtime.AlertMillis = binary.LittleEndian.Uint32(b[140:144])
-	valid = valid && b[60]>>4 == 0
-	for _, v := range b[144 : RecordSize-8] {
+	r.Settings.TouchWake = b[144] == 1
+	valid = valid && b[60]>>4 == 0 && b[144] <= 1
+	for _, v := range b[145 : RecordSize-8] {
 		valid = valid && v == 0
 	}
 	valid = valid && (!r.HasSettings || r.Settings.valid()) && (!r.HasRuntime || (r.HasSettings && r.Runtime.valid()))

@@ -12,7 +12,8 @@ need hardware verification.
 
 1. Build `bash scripts/build-ota.sh 0.2.4` (or your chosen version).
 2. On a confirmed goPine build, swipe left to **Settings**, tap **Firmware
-   Update**, then hold **HOLD 3 SECONDS** continuously until the countdown finishes.
+   Update**, then hold **PRESS AND HOLD** continuously until the three-second
+   countdown above the button finishes. The progress bar is above the button too.
    The prompt expires after 30 seconds. Releasing early or dragging away cancels
    the hold; swipe right or tap the back arrow to return to Settings. Sleep or a
    prolonged loss of valid contact samples also cancels the hold. Brief invalid
@@ -384,3 +385,29 @@ Package: `build/ota/gopine-dfu-0.3.2.zip`; SHA-256:
 `204244c5d3ac9956b9c57eabd2b200176b8c8140b6ec868388186a032f495f02`.
 The resource gate passed for this exact ELF. Optimization measurements and
 verification are recorded in [performance notes](performance.md).
+
+### Touch wake and visible hold countdown candidate (0.3.3)
+
+On 2026-10-06, the host uploaded the 212,668-byte 0.3.3 BLE candidate through
+recovery at `C9:9E:15:7A:69:B5` using USB adapter hci1. An initial connection
+attempt timed out before sending firmware. The next connection verified the
+Legacy DFU service and transferred the complete image in 2 minutes 24 seconds,
+with receiver byte counts checked during transfer. Receiver firmware validation
+succeeded, and activation/reset was sent. Its write acknowledgement timed out;
+no transfer retry was attempted after activation. The user then confirmed that
+goPine booted and they tapped KEEP, establishing successful boot and on-watch
+confirmation. Sleep current, repeated touch reinitialization, and the new hold
+layout still need dedicated hardware checks. Bootloader and stored recovery
+were unchanged.
+
+This candidate adds the default-Off Touch to wake setting and sleep power
+changes described in [the power audit](power.md). The firmware-update countdown
+and progress bar now appear above the fixed PRESS AND HOLD button.
+
+Package: `build/ota/gopine-dfu-0.3.3.zip`; SHA-256:
+`7769895a9f893290ff661ff2f23e266a750dda5bdca1c28b6c70f1a07d44aee9`.
+Host tests and the resource gate passed for the packaged build. The transfer log
+is `build/ota/gopine-upload-0.3.3.log`; its one-shot sender is
+`build/ota/upload-0.3.3.py`, wrapping the pinned InfiniTime Legacy DFU controller
+with an explicit adapter/address, package hash, service verification, strict
+write/notification checks, and no automatic transfer retries.

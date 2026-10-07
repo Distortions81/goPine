@@ -9,6 +9,27 @@ import (
 
 var errCut = errors.New("power cut")
 
+func TestTouchWakeRecordCompatibility(t *testing.T) {
+	r := Record{HasSettings: true, Settings: Settings{CountdownSeconds: 300}}
+	b := encode(r)
+	// Old v2 records wrote zeros in all eight reserved bytes.
+	clear(b[144:152])
+	binary.LittleEndian.PutUint32(b[152:156], crc32.ChecksumIEEE(b[:152]))
+	if got, ok := decode(&b); !ok || got != r || got.Settings.TouchWake {
+		t.Fatal("old settings no longer load with touch wake off")
+	}
+	r.Settings.TouchWake = true
+	b = encode(r)
+	if got, ok := decode(&b); !ok || got != r {
+		t.Fatal("touch wake record failed to round trip")
+	}
+	b[144] = 2
+	binary.LittleEndian.PutUint32(b[152:156], crc32.ChecksumIEEE(b[:152]))
+	if _, ok := decode(&b); ok {
+		t.Fatal("accepted an unsupported touch wake value")
+	}
+}
+
 type memoryFlash struct {
 	data           [Size]byte
 	budget         int // -1 unlimited; otherwise cut before the next word write/erase.

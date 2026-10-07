@@ -24,6 +24,8 @@ type scriptDisplay struct {
 	pulses             []time.Duration
 	failWait, failWake bool
 	frameTime          time.Duration
+	powerReads         int
+	touchWake          bool
 }
 
 func newScriptDisplay() *scriptDisplay {
@@ -69,7 +71,11 @@ func (d *scriptDisplay) Display() error {
 	d.now = d.now.Add(d.frameTime)
 	return nil
 }
-func (d *scriptDisplay) PowerStatus() powerStatus { return powerStatus{Percent: 80} }
+func (d *scriptDisplay) PowerStatus() powerStatus {
+	d.powerReads++
+	return powerStatus{Percent: 80}
+}
+func (d *scriptDisplay) SetTouchWake(enabled bool) { d.touchWake = enabled }
 func (d *scriptDisplay) Wake() error {
 	if d.failWake {
 		return errors.New("wake failed")
@@ -209,5 +215,69 @@ func TestScriptFailuresStopMotor(t *testing.T) {
 				t.Fatal("error lost or motor left on", err)
 			}
 		})
+	}
+}
+
+func TestScriptSleepReducesPowerSamplesAndRefreshesOnWake(t *testing.T) {
+	d := newScriptDisplay()
+	u := newWatchUI(firmwareConfirmed)
+	u.touchWake = true // Restored setting must reach the display before Wait.
+	d.steps = []scriptStep{
+		{at: 100 * time.Millisecond, event: inputEvent{Kind: inputSleep}, check: func() {
+			if !d.touchWake {
+				t.Fatal("saved touch wake setting not applied")
+			}
+		}},
+		{at: 61200 * time.Millisecond, event: inputEvent{Kind: inputWake}, check: func() {
+			if d.powerReads != 3 {
+				t.Fatalf("got %d power samples during 61s sleep, want boot + two", d.powerReads)
+			}
+		}},
+		{at: 61300 * time.Millisecond, event: inputEvent{Kind: inputQuit}, check: func() {
+			if d.powerReads != 4 {
+				t.Fatal("wake did not refresh battery")
+			}
+		}},
+	}
+	if err := runScript(t, d, &u, &fakeTimeRadio{}); err != nil {
+		t.Fatal(err)
+	}
+	if d.waits > 8 {
+		t.Fatal("idle sleep kept waking the application loop", d.waits)
+	}
+}
+
+func TestScriptTouchSettingSavesBeforeSleepingPowerPoll(t *testing.T) {
+	d := newScriptDisplay()
+	u := newWatchUI(firmwareConfirmed)
+	_, j, _ := clockTestStorage(t)
+	p := loadSettings(&u, d.now, j)
+	d.steps = []scriptStep{
+		{event: inputEvent{Kind: inputSwipeLeft}},
+		{at: 100 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 120, Y: 195}},
+		{at: 200 * time.Millisecond, event: inputEvent{Kind: inputSleep}, check: func() {
+			if !d.touchWake {
+				t.Fatal("UI toggle did not reach display")
+			}
+		}},
+		{at: 2200 * time.Millisecond, event: inputEvent{Kind: inputQuit}, check: func() {
+			r, ok := j.Latest()
+			if !ok || !r.Settings.TouchWake {
+				t.Fatal("sleep delayed saving touch wake until battery poll")
+			}
+			if d.powerReads != 1 {
+				t.Fatal("save deadline unnecessarily sampled battery")
+			}
+		}},
+	}
+	controller := timeSyncController{radio: &fakeTimeRadio{}}
+	l := watchLoop{display: d, ui: &u, sync: &controller, renderer: &frameRenderer{},
+		now: func() time.Time { return d.now }, state: func() updateState { return firmwareConfirmed },
+		save: func(now time.Time, _ powerStatus) time.Time {
+			p.update(&u, now, true)
+			return p.deadline(true)
+		}}
+	if err := l.run(); err != nil {
+		t.Fatal(err)
 	}
 }

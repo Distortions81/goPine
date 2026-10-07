@@ -161,6 +161,29 @@ func TestSettingsTimeFormatAndKeepLanding(t *testing.T) {
 	}
 }
 
+func TestTouchWakeSettingDefaultsOffAndRepaints(t *testing.T) {
+	now := time.Unix(0, 0)
+	u := newWatchUI(firmwareConfirmed)
+	if u.touchWake {
+		t.Fatal("touch wake must default off")
+	}
+	u.handle(inputEvent{Kind: inputSwipeLeft}, now, firmwareConfirmed, powerStatus{})
+	before := u.frameKey(now, powerStatus{})
+	tap := inputEvent{Kind: inputTap, X: 120, Y: 196}
+	u.handle(tap, now, firmwareConfirmed, powerStatus{})
+	if !u.touchWake || u.page != pageSettings || u.frameKey(now, powerStatus{}) == before {
+		t.Fatal("toggle did not enable/repaint in settings")
+	}
+	u.handle(tap, now, firmwareConfirmed, powerStatus{})
+	if u.touchWake {
+		t.Fatal("second tap did not disable touch wake")
+	}
+	u.handle(inputEvent{Kind: inputTap, X: 20, Y: 20}, now, firmwareConfirmed, powerStatus{})
+	if u.page != pageClock {
+		t.Fatal("settings back arrow stopped working")
+	}
+}
+
 func TestTrialConfirmation(t *testing.T) {
 	u := newWatchUI(firmwareTrial)
 	now := time.Unix(0, 0)

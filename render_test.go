@@ -24,6 +24,7 @@ func (d *memoryDisplay) Wait(time.Duration) (inputEvent, error) { return inputEv
 func (d *memoryDisplay) Close() error                           { return nil }
 func (d *memoryDisplay) Wake() error                            { return nil }
 func (d *memoryDisplay) KeepAwake()                             {}
+func (d *memoryDisplay) SetTouchWake(bool)                      {}
 func (d *memoryDisplay) SetVibration(bool)                      {}
 func (d *memoryDisplay) SetPixel(x, y int16, c color.RGBA) {
 	d.singles++
@@ -92,7 +93,7 @@ func TestStripRendererMatchesDirectPixelsAndSkipsUnchanged(t *testing.T) {
 	}
 }
 
-func TestHoldFeedbackOnlyTransfersButtonStrips(t *testing.T) {
+func TestHoldFeedbackUpdatesAboveButton(t *testing.T) {
 	d := &memoryDisplay{}
 	u := watchUI{page: pageUpdate, holding: true, holdStep: 10}
 	draw := func(c canvas) { u.draw(c, time.Unix(0, 0)) }
@@ -100,6 +101,7 @@ func TestHoldFeedbackOnlyTransfersButtonStrips(t *testing.T) {
 	if err := r.render(d, draw); err != nil {
 		t.Fatal(err)
 	}
+	before := d.pixels
 	u.holdStep = 11
 	d.writes = 0
 	if err := r.render(d, draw); err != nil {
@@ -107,6 +109,11 @@ func TestHoldFeedbackOnlyTransfersButtonStrips(t *testing.T) {
 	}
 	if d.writes < 1 || d.writes > (44+stripHeight-1)/stripHeight+1 {
 		t.Fatalf("hold feedback redrew %d strips", d.writes)
+	}
+	for i, pixel := range d.pixels {
+		if pixel != before[i] && i/240 >= 174 {
+			t.Fatal("countdown feedback is still under the finger on the button")
+		}
 	}
 }
 

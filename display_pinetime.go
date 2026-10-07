@@ -20,6 +20,7 @@ type pineTimeDisplay struct {
 	batteryReady      bool
 	buttonPressed     bool
 	screenOn          bool
+	touchWake         bool
 	sleepAt           time.Time
 	touch             touchController
 	touchEvents       touchQueue
@@ -97,6 +98,7 @@ func openDisplay() (clockDisplay, error) {
 		SampleTime: 40,
 		Samples:    1,
 	})
+	nrf.SAADC.ENABLE.Set(0)
 
 	machine.BUTTON_OUT.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.BUTTON_OUT.Low()
@@ -121,7 +123,10 @@ func (d *pineTimeDisplay) FillScreen(c color.RGBA) {
 }
 
 func (d *pineTimeDisplay) PowerStatus() powerStatus {
+	nrf.SAADC.ENABLE.Set(nrf.SAADC_ENABLE_ENABLE_Enabled)
 	raw := d.batteryADC.Get()
+	// Get waits for STOPPED but leaves the peripheral enabled.
+	nrf.SAADC.ENABLE.Set(0)
 	millivolts := uint32(adcToBatteryMillivolts(raw))
 	if d.batteryReady {
 		// Smooth occasional ADC noise without hiding meaningful changes for long.
@@ -173,6 +178,9 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 		d.buttonPressed = pressed
 		d.serviceInput()
 		if touch := d.touchEvents.pop(); touch.Activity {
+			if !d.screenOn && !d.touchWake {
+				continue
+			}
 			d.sleepAt = now.Add(screenTimeout)
 			if !d.screenOn {
 				d.touchEvents.clear()
@@ -203,7 +211,8 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 		if d.touch.tracker.down {
 			interval = touchPollInterval // Catch brief IRQ windows during contact.
 		}
-		time.Sleep(interval)
+		// Do not round a timer/alert deadline up to a full input poll.
+		time.Sleep(min(interval, max(time.Until(refreshAt), minimumLoopWait)))
 	}
 }
 
@@ -215,6 +224,9 @@ func (d *pineTimeDisplay) serviceInput() {
 		d.SetVibration(false)
 	}
 	serviceTimeRadio()
+	if !d.screenOn && !d.touchWake {
+		return
+	}
 	if !d.touchEvents.push(d.touch.Poll()) {
 		d.touch.tracker.cancel()
 	}
@@ -225,6 +237,21 @@ func (d *pineTimeDisplay) serviceInput() {
 func (d *pineTimeDisplay) KeepAwake() {
 	if d.screenOn {
 		d.sleepAt = time.Now().Add(screenTimeout)
+	}
+}
+
+func (d *pineTimeDisplay) SetTouchWake(enabled bool) {
+	if d.touchWake == enabled {
+		return
+	}
+	d.touchWake = enabled
+	if !d.screenOn {
+		d.touchEvents.clear()
+		if enabled {
+			d.touch.Wake()
+		} else {
+			d.touch.Sleep()
+		}
 	}
 }
 
@@ -269,14 +296,20 @@ func (d *pineTimeDisplay) setScreen(on bool) error {
 		return nil
 	}
 	if on {
+		machine.SPI0.Bus.ENABLE.Set(nrf.SPIM_ENABLE_ENABLE_Enabled)
 		if err := d.DeviceOf.Sleep(false); err != nil {
 			return err
 		}
+		d.touch.Wake()
 		setBacklight(true)
 	} else {
 		setBacklight(false)
 		if err := d.DeviceOf.Sleep(true); err != nil {
 			return err
+		}
+		machine.SPI0.Bus.ENABLE.Set(0)
+		if !d.touchWake {
+			d.touch.Sleep()
 		}
 	}
 	d.screenOn = on

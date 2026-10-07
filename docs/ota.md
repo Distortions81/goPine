@@ -8,7 +8,75 @@ KEEP/REVERT, and re-entry to recovery after KEEP have been verified on this watc
 Persistence across an ordinary reboot after KEEP and power-loss behavior still
 need hardware verification.
 
-## Normal update
+## Build and update with one command (Linux)
+
+Install Python 3 with venv support, Git, Go (the version in `go.mod`), TinyGo
+0.42.0, Clang/LLVM (`clang` and `llvm-ar`), and BlueZ's `gatttool`.
+Put Go and TinyGo on `PATH`, or set `TINYGO`
+to the TinyGo executable. The wrapper creates `build/ota/venv` with pinned
+Python dependencies and fetches the pinned official InfiniTime controller on
+first use. All preparation happens before the recovery prompt.
+For a nonstandard local installation, put exported toolchain/cache variables
+in ignored `build/ota/environment.sh`; the wrapper sources it on every run.
+
+First run, specifying the **recovery** address and chosen adapter:
+
+```sh
+bash scripts/ota-update.sh 0.3.5 --adapter hci1 --address C9:9E:15:7A:69:B5
+```
+
+Use your intended firmware version in place of `0.3.5`. The target is saved in
+ignored `build/ota/device.json`; subsequent updates need only the version:
+
+```sh
+bash scripts/ota-update.sh 0.3.5
+# Or prepare the same way and serve browser controls:
+bash scripts/ota-update.sh 0.3.5 --web
+```
+
+The script builds the BLE application, runs the existing memory resource gate,
+validates the application-only ZIP, MCUboot hash, link address and DFU CRC, and
+freezes a copy by SHA-256. When it says Ready, disconnect phone apps (turning off
+phone Bluetooth is simplest), keep the watch close to the selected adapter,
+and enter **Firmware update → PRESS AND HOLD**. As soon as recovery appears,
+press Enter in the terminal or click **Recovery ready — upload** on the page.
+The uploader connects directly to the saved address without a discovery scan.
+
+With `--web`, open the printed `http://127.0.0.1:8765` URL on this computer.
+This is a local Python service controlling Linux Bluetooth, not a standalone
+Web Bluetooth page. Keep the terminal running during the transfer. The page
+shows progress, logs, package hash, and a separate boot/KEEP confirmation.
+It binds only to loopback and requires the local page's session token for
+transfer actions; opening or refreshing the page never starts an upload.
+
+To reuse an already built package without rebuilding:
+
+```sh
+bash scripts/ota-update.sh 0.3.4 --package build/ota/gopine-dfu-0.3.4.zip --web
+```
+
+`--ready` skips the terminal prompt for an already prepared, ready recovery
+session; prefer it with `--package` so a build cannot consume the recovery
+window. `--prepare-only` builds/validates and exits without a Bluetooth
+connection. `--port` changes the web port. `GOPINE_OTA_PYTHON` can select an existing
+Python environment containing `pexpect` instead of creating the default venv.
+Timestamped logs are saved under `build/ota/`.
+
+A failure before DFU starts permits an explicit retry after restarting recovery.
+Once DFU starts, failures require inspection and a fresh updater invocation;
+there are no automatic transfer retries. A missing activation acknowledgement
+after receiver validation is reported as **check boot and KEEP**, not a reason
+to send the firmware again. Exit status zero from the wrapper means receiver
+validation and activation were sent; only your observation of boot and tapping
+KEEP establishes installation. A second local uploader cannot transfer while
+the first holds the upload lock.
+
+Offline protocol/package tests and local HTTP tests run with
+`python3 scripts/test_ota_update.py`; they never connect to a watch. The reusable
+wrapper and page have host validation; the successful physical transfer below
+used the preceding one-shot sender from which the reusable sender was adapted.
+
+## Manual update with a companion tool
 
 1. Build `bash scripts/build-ota.sh 0.2.4` (or your chosen version).
 2. On a confirmed goPine build, swipe left to **Settings**, tap **Firmware
@@ -411,3 +479,23 @@ is `build/ota/gopine-upload-0.3.3.log`; its one-shot sender is
 `build/ota/upload-0.3.3.py`, wrapping the pinned InfiniTime Legacy DFU controller
 with an explicit adapter/address, package hash, service verification, strict
 write/notification checks, and no automatic transfer retries.
+
+### Sleep power candidate (0.3.4)
+
+On 2026-10-07, the host sent all 213,988 bytes through recovery at
+`C9:9E:15:7A:69:B5` using hci1 in 2 minutes 24 seconds. Initial connections
+failed before DFU started. Restarting recovery and connecting directly with the
+prepared sender resolved the connection problem. Receiver byte counts and final
+firmware validation passed. Activation/reset was sent; its acknowledgement
+timed out and no automatic retry followed. The user confirmed that goPine
+booted and they tapped KEEP. Sleep current and extended wake testing remain
+pending; boot confirmation alone does not establish a battery-life improvement.
+
+This candidate disables unused sensors, avoids periodic battery samples asleep,
+uses event/deadline sleep, and adopts measured PineTime discharge data for the
+percentage estimate. See [the power audit](power.md).
+
+Package: `build/ota/gopine-dfu-0.3.4.zip`; SHA-256:
+`6bb8616b65bfe1caa6941fb71b0a71ca120b5a1847637f7749a991333c0305b0`.
+Host tests, standalone/BLE builds, the resource gate, and BLE port sanitizer
+checks passed. Transfer log: `build/ota/gopine-upload-0.3.4.log`.

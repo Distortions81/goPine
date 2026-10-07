@@ -126,6 +126,7 @@ sync. Measure with the debugger disconnected. Confirm charging indications
 refresh on wake and touch reinitializes reliably after many sleep cycles before
 claiming a battery-life improvement.
 
-The 0.3.4 candidate containing these changes has not been installed or measured
-on the watch yet. In particular, GPIO sense, short-press latching, and repeated
+The 0.3.4 candidate containing these changes was installed by OTA on 2026-10-07;
+the user confirmed boot and tapped KEEP. Sleep current has not been measured.
+In particular, GPIO sense, short-press latching, and repeated
 RTC2 sleep/wake need device validation with and without prior Bluetooth sync.

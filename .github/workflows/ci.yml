@@ -26,6 +26,8 @@ jobs:
         run: python3 scripts/test_sync_time.py
       - name: Test resource-budget checker
         run: python3 scripts/test_check_resources.py
+      - name: Test OTA updater without Bluetooth
+        run: python3 scripts/test_ota_update.py
       - name: Check module files
         run: go mod tidy -diff
       - name: Build simulator

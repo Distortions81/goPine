@@ -6,6 +6,7 @@ import {webcrypto} from 'node:crypto';
 import {browserSupport, connectionReadiness} from './support.mjs';
 import {MAX_PACKAGE_BYTES} from './firmware.mjs';
 import {UpdateError} from './protocol.mjs';
+import {UpdateDiagnostics, browserDescription} from './diagnostics.mjs';
 
 const source = readFileSync(new URL('./app.mjs', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -28,7 +29,7 @@ async function until(condition) {
 
 class Element {
   constructor(tag) {
-    this.textContent = ''; this.value = ''; this.files = [];
+    this.textWrites = 0; this.textContent = ''; this.value = ''; this.files = [];
     this.hidden = /\bhidden(?:\s|>)/.test(tag);
     this.disabled = /\bdisabled(?:\s|>)/.test(tag);
     this.style = {}; this.listeners = new Map(); this.attributes = new Map();
@@ -46,8 +47,10 @@ class Element {
   }
   setAttribute(name, value) { this.attributes.set(name, value); }
   removeAttribute(name) { this.attributes.delete(name); }
-  focus() {}
-  select() {}
+  get textContent() { return this.text; }
+  set textContent(value) { this.text = value; this.textWrites++; }
+  focus() { this.focused = true; }
+  select() { this.selected = true; }
 }
 
 // Execute the complete application with isolated DOM/network/protocol boundaries.
@@ -59,14 +62,15 @@ function app(options = {}) {
   const calls = {fetch: [], inspect: [], picker: 0, updaters: []};
   const document = Object.assign(new Element(''), {getElementById: get, visibilityState: 'visible'});
   const window = Object.assign(new Element(''), {isSecureContext: true});
-  const navigator = {bluetooth: {requestDevice: async () => {
+  const navigator = {userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0.0.0 Safari/537.36',
+    clipboard: options.clipboard, bluetooth: {requestDevice: async () => {
     calls.picker++;
     if (!options.updaterRun) throw new DOMException('Picker cancelled', 'NotFoundError');
-    return {};
+    return {id: 'private-device-id'};
   }}};
   class DirectUpdater {
     constructor(config) {
-      Object.assign(this, config, {pendingOperations: 0, active: false, runs: 0, disconnects: 0});
+      Object.assign(this, config, {pendingOperations: 0, active: false, runs: 0, disconnects: 0, session: 3456789012});
       calls.updaters.push(this);
     }
     async run() {
@@ -75,14 +79,14 @@ function app(options = {}) {
       finally { this.active = false; }
     }
     disconnect() { this.disconnects++; }
-    stop() {}
+    stop() { options.updaterStop?.(this); }
   }
-  assert.equal((source.match(/^import .*;$/gm) || []).length, 3, 'update dependency injection when app imports change');
+  assert.equal((source.match(/^import .*;$/gm) || []).length, 4, 'update dependency injection when app imports change');
   runInNewContext(source.replace(/^import .*;\n/gm, ''), {
     document, window, navigator, location: {href: 'https://distortions81.github.io/goPineTime/'},
     URL, Uint8Array, DOMException, DecompressionStream: options.validation === false ? undefined : DecompressionStream,
     AbortController, setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout,
-    crypto: webcrypto, MAX_PACKAGE_BYTES, browserSupport, connectionReadiness, DirectUpdater, UpdateError,
+    crypto: webcrypto, MAX_PACKAGE_BYTES, browserSupport, connectionReadiness, DirectUpdater, UpdateError, UpdateDiagnostics, browserDescription,
     requestWatch: () => navigator.bluetooth.requestDevice(),
     fetch: async (...args) => {
       calls.fetch.push(args);
@@ -290,4 +294,133 @@ test('a retired native Bluetooth operation prevents Resume and Start over until 
   assert.equal(updater.disconnects, 1);
   assert.equal(page.get('connect').hidden, false);
   assert.equal(page.get('connect').disabled, false);
+});
+
+test('rapid reconnect messages remain readable and copyable with a bounded history', async () => {
+  const running = deferred(), copies = [];
+  const page = app({fetch: url => new Response(url.endsWith('.json') ? JSON.stringify(manifest) : packageBytes),
+    clipboard: {writeText: async text => { copies.push(text); }}, updaterRun: () => running.promise});
+  await until(() => !page.get('connect').disabled);
+  assert.equal(page.get('diagnostics').hidden, true);
+  const connecting = page.get('connect').emit('click');
+  await until(() => page.calls.updaters.length === 1);
+  const updater = page.calls.updaters[0];
+  assert.equal(page.get('diagnostics').hidden, false);
+  assert.equal(page.get('copy-diagnostics').hidden, false);
+  for (let index = 0; index < 25; index++) {
+    updater.onState({phase: 'reconnecting', message: `Discovery failed ${index}; device id=private-device-id session=3456789012`});
+    updater.onState({phase: 'connecting', message: 'Connecting again'});
+  }
+  assert.equal(page.get('diagnostic-history').textContent.split('\n').length, 20);
+  assert.match(page.get('diagnostic-failure').textContent, /Discovery failed 24/);
+  assert.equal(page.get('status').textContent, 'Connecting again');
+  const writes = page.get('diagnostic-history').textWrites;
+  for (let index = 0; index < 100; index++) updater.onProgress(index, 100);
+  updater.onState({phase: 'connecting', message: 'Connecting again'});
+  assert.equal(page.get('diagnostic-history').textWrites, writes, 'packet progress and duplicate states do not redraw diagnostics');
+  await page.get('copy-diagnostics').emit('click');
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], /Selected firmware: 0\.3\.15\nBrowser: Chrome 130\.0\.0\.0 on Linux/);
+  assert.match(copies[0], /Last failure: .*Discovery failed 24/);
+  assert.equal(copies[0].includes('private-device-id'), false);
+  assert.equal(copies[0].includes('3456789012'), false);
+  assert.match(page.get('diagnostic-copy-status').textContent, /copied/);
+  running.resolve();
+  await connecting;
+});
+
+test('clipboard denial exposes a selected snapshot that new reconnect events cannot overwrite', async () => {
+  const running = deferred();
+  const page = app({fetch: url => new Response(url.endsWith('.json') ? JSON.stringify(manifest) : packageBytes),
+    clipboard: {writeText: async () => { throw new DOMException('Clipboard denied', 'NotAllowedError'); }}, updaterRun: () => running.promise});
+  await until(() => !page.get('connect').disabled);
+  const connecting = page.get('connect').emit('click');
+  await until(() => page.calls.updaters.length === 1);
+  const updater = page.calls.updaters[0];
+  updater.onState({phase: 'reconnecting', message: 'First connection error'});
+  await page.get('copy-diagnostics').emit('click');
+  const snapshot = page.get('diagnostic-text').value;
+  assert.equal(page.get('diagnostic-fallback').hidden, false);
+  assert.equal(page.get('diagnostic-text').focused, true);
+  assert.equal(page.get('diagnostic-text').selected, true);
+  assert.match(snapshot, /First connection error/);
+  updater.onState({phase: 'reconnecting', message: 'Another connection error'});
+  assert.equal(page.get('diagnostic-text').value, snapshot);
+  assert.match(page.get('diagnostic-history').textContent, /Another connection error/);
+  running.resolve();
+  await connecting;
+});
+
+test('pause and resume retain diagnostics while Start over clears the next attempt', async () => {
+  const firstRun = deferred(), secondRun = deferred();
+  const page = app({fetch: url => new Response(url.endsWith('.json') ? JSON.stringify(manifest) : packageBytes),
+    updaterRun: updater => updater.runs === 1 ? firstRun.promise : secondRun.promise,
+    updaterStop: () => firstRun.reject(new DOMException('Paused', 'AbortError'))});
+  await until(() => !page.get('connect').disabled);
+  const connecting = page.get('connect').emit('click');
+  await until(() => page.calls.updaters.length === 1);
+  const updater = page.calls.updaters[0];
+  updater.onState({phase: 'reconnecting', message: 'Remember this failure'});
+  await page.get('pause').emit('click');
+  await connecting;
+  assert.match(page.get('diagnostic-history').textContent, /Remember this failure/);
+  assert.match(page.get('diagnostic-history').textContent, /\[paused\]/);
+  await page.get('resume').emit('click');
+  await until(() => updater.runs === 2);
+  updater.onState({phase: 'connecting', message: 'Connecting after resume'});
+  assert.match(page.get('diagnostic-failure').textContent, /Remember this failure/);
+  assert.match(page.get('diagnostic-history').textContent, /\[resuming\]/);
+  secondRun.reject(new UpdateError('Stopped again', {retryable: true, code: 'NO_PROGRESS', stage: 'finding the update service'}));
+  await until(() => !page.get('reset').hidden);
+  assert.match(page.get('diagnostic-history').textContent, /NO_PROGRESS \/ finding the update service/);
+  await page.get('copy-diagnostics').emit('click');
+  assert.equal(page.get('diagnostic-fallback').hidden, false, 'missing Clipboard API uses the same fallback');
+  await page.get('reset').emit('click');
+  assert.equal(page.get('diagnostics').hidden, true);
+  assert.equal(page.get('diagnostic-history').textContent, '');
+  assert.equal(page.get('diagnostic-failure').hidden, true);
+  assert.equal(page.get('diagnostic-text').value, '');
+  assert.equal(page.get('diagnostic-fallback').hidden, true);
+});
+
+test('a late clipboard failure cannot restore diagnostics after Start over', async () => {
+  const clipboard = deferred();
+  const page = app({fetch: url => new Response(url.endsWith('.json') ? JSON.stringify(manifest) : packageBytes),
+    clipboard: {writeText: () => clipboard.promise},
+    updaterRun: async () => { throw new UpdateError('No connection', {retryable: true}); }});
+  await until(() => !page.get('connect').disabled);
+  await page.get('connect').emit('click');
+  const copying = page.get('copy-diagnostics').emit('click');
+  await page.get('reset').emit('click');
+  clipboard.reject(new DOMException('Clipboard denied', 'NotAllowedError'));
+  await copying;
+  assert.equal(page.get('diagnostics').hidden, true);
+  assert.equal(page.get('diagnostic-fallback').hidden, true);
+  assert.equal(page.get('diagnostic-copy-status').textContent, '');
+  assert.equal(page.get('diagnostic-text').value, '');
+});
+
+test('clipboard writes are serialized even after Start over begins a new attempt', async () => {
+  const firstCopy = deferred(), copies = [];
+  const page = app({fetch: url => new Response(url.endsWith('.json') ? JSON.stringify(manifest) : packageBytes),
+    clipboard: {writeText: text => { copies.push(text); return copies.length === 1 ? firstCopy.promise : Promise.resolve(); }},
+    updaterRun: async () => { throw new UpdateError('No connection', {retryable: true}); }});
+  await until(() => !page.get('connect').disabled);
+  await page.get('connect').emit('click');
+  const copying = page.get('copy-diagnostics').emit('click');
+  assert.equal(page.get('copy-diagnostics').disabled, true);
+  await page.get('copy-diagnostics').emit('click');
+  assert.equal(copies.length, 1);
+  await page.get('reset').emit('click');
+  await page.get('connect').emit('click');
+  page.calls.updaters[1].onState({phase: 'reconnecting', message: 'New attempt failure'});
+  await page.get('copy-diagnostics').emit('click');
+  assert.equal(copies.length, 1, 'a pending native clipboard write must settle before a new one starts');
+  firstCopy.resolve();
+  await copying;
+  assert.equal(page.get('copy-diagnostics').disabled, false);
+  assert.equal(page.get('diagnostic-copy-status').textContent, '', 'the old completion does not claim the new report was copied');
+  await page.get('copy-diagnostics').emit('click');
+  assert.equal(copies.length, 2);
+  assert.match(copies[1], /New attempt failure/);
 });

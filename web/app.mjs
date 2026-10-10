@@ -1,6 +1,7 @@
 import { inspectPackage, MAX_PACKAGE_BYTES } from './firmware.mjs';
 import { DirectUpdater, UpdateError, requestWatch } from './protocol.mjs';
 import { browserSupport, connectionReadiness } from './support.mjs';
+import { UpdateDiagnostics, browserDescription } from './diagnostics.mjs';
 
 const $ = id => document.getElementById(id);
 const supportsBluetooth = window.isSecureContext && typeof navigator.bluetooth?.requestDevice === 'function';
@@ -17,6 +18,30 @@ let wakeLock = null;
 let activity = null;
 let validationError = '';
 let selectionRequested = false;
+const diagnostics = new UpdateDiagnostics();
+let diagnosticCopy = 0;
+let diagnosticCopyPending = false;
+
+function renderDiagnostics() {
+  $('diagnostics').hidden = !diagnostics.active;
+  $('diagnostic-history').textContent = diagnostics.history();
+  $('diagnostic-summary').textContent = `Connection history (${diagnostics.records.length} events)`;
+  const failure = diagnostics.latestFailure;
+  $('diagnostic-failure').hidden = !failure;
+  $('diagnostic-failure').textContent = failure ? `Last connection issue: ${diagnostics.format(failure)}` : '';
+}
+function recordDiagnostic(phase, message, details) {
+  if (diagnostics.record(phase, message, details)) renderDiagnostics();
+}
+function clearDiagnostics() {
+  diagnosticCopy++;
+  diagnostics.clear();
+  $('diagnostic-details').open = false;
+  $('diagnostic-copy-status').textContent = '';
+  $('diagnostic-fallback').hidden = true;
+  $('diagnostic-text').value = '';
+  renderDiagnostics();
+}
 
 function error(message = '') {
   $('error').textContent = message;
@@ -66,6 +91,7 @@ function onState({ phase, message }) {
   $('phase').textContent = labels[phase] || 'Updating';
   $('watch-label').textContent = labels[phase] || 'Updating…';
   if (!paused) status(message || labels[phase] || 'Updating…');
+  recordDiagnostic(phase, message || labels[phase] || 'Updating…', {failure: phase === 'reconnecting'});
 }
 async function keepAwake() {
   if (!transferring || document.visibilityState !== 'visible' || !navigator.wakeLock) return;
@@ -197,10 +223,12 @@ async function transfer() {
     if (paused || e.name === 'AbortError') {
       paused = true;
       status('Transfer paused. Leave the watch on its update screen, then resume here.');
+      recordDiagnostic('paused', 'Transfer paused. The same transfer can be resumed on this page.');
     } else {
       const fatal = (e instanceof UpdateError && !e.retryable) || ['NotFoundError', 'NotSupportedError', 'SecurityError', 'TypeError'].includes(e.name);
       paused = !fatal;
       error(e.message || 'The Bluetooth transfer stopped. Check the watch and try again.');
+      recordDiagnostic('error', e.message || 'The Bluetooth transfer stopped.', {failure: true, code: e.code || e.name, stage: e.stage});
       status(fatal ? 'Read the watch screen. Cancel the transfer there, then choose Start over here.' : 'Transfer paused. Keep the watch on its update screen and resume when ready.');
     }
     $('transfer-title').textContent = 'Transfer stopped';
@@ -215,19 +243,51 @@ $('connect').addEventListener('click', async () => {
   if (busy || !firmware || updater || !supportsBluetooth) return;
   busy = true;
   activity = 'connecting';
+  clearDiagnostics();
+  diagnostics.start({version: firmware.version, browser: browserDescription(navigator)});
+  recordDiagnostic('selecting', 'Waiting for watch selection in the Bluetooth picker.');
   error();
   controls();
   status('Choose goPine Update in the Bluetooth picker.');
   try {
     // Keep requestDevice in this user gesture; firmware is already validated.
     const device = await requestWatch();
+    diagnostics.protect(device.id);
     updater = new DirectUpdater({ device, image: firmware.image, onProgress: progress, onState,
       onPendingChange: () => { if (!updater?.active) controls(); } });
+    diagnostics.protect(updater.session);
     await transfer();
   } catch (e) {
     status('The watch is not connected. Open its update screen, then try again.');
     if (e.name !== 'NotFoundError') error(e.message || 'Bluetooth connection was not available.');
+    recordDiagnostic(e.name === 'NotFoundError' ? 'cancelled' : 'error', e.message || 'Bluetooth connection was not available.',
+      {failure: e.name !== 'NotFoundError', code: e.code || e.name, stage: e.stage});
   } finally { busy = false; activity = null; controls(); }
+});
+$('copy-diagnostics').addEventListener('click', async () => {
+  if (!diagnostics.active || diagnosticCopyPending) return;
+  // This snapshot stays fixed even if more reconnect events arrive while the
+  // user copies it from the fallback field.
+  const report = diagnostics.report();
+  const copy = ++diagnosticCopy;
+  $('diagnostic-text').value = report;
+  diagnosticCopyPending = true;
+  $('copy-diagnostics').disabled = true;
+  try {
+    await navigator.clipboard.writeText(report);
+    if (copy !== diagnosticCopy) return;
+    $('diagnostic-copy-status').textContent = 'Diagnostics copied. You can paste them into a support message.';
+    $('diagnostic-fallback').hidden = true;
+  } catch {
+    if (copy !== diagnosticCopy) return;
+    $('diagnostic-fallback').hidden = false;
+    $('diagnostic-text').focus();
+    $('diagnostic-text').select();
+    $('diagnostic-copy-status').textContent = 'Copy the selected diagnostic text below.';
+  } finally {
+    diagnosticCopyPending = false;
+    $('copy-diagnostics').disabled = false;
+  }
 });
 $('updater-url').value = new URL('./', location.href).href;
 $('copy-flag').addEventListener('click', async () => {
@@ -255,13 +315,19 @@ $('pause').addEventListener('click', () => {
   status('Pausing the transfer…');
   controls();
 });
-$('resume').addEventListener('click', () => { if (updater && !busy && paused && !finished && !updater.pendingOperations) void transfer(); });
+$('resume').addEventListener('click', () => {
+  if (updater && !busy && paused && !finished && !updater.pendingOperations) {
+    recordDiagnostic('resuming', 'Resuming the existing transfer from bytes confirmed by the watch.');
+    void transfer();
+  }
+});
 $('reset').addEventListener('click', () => {
   if (busy || updater?.pendingOperations) return;
   updater?.disconnect();
   updater = null;
   paused = false;
   finished = false;
+  clearDiagnostics();
   progress(0, firmware?.image.byteLength || 0);
   $('preparation').hidden = false;
   $('transfer-progress').hidden = true;
@@ -277,6 +343,7 @@ $('confirmed').addEventListener('click', () => {
   $('confirmed').hidden = true;
   $('watch-label').textContent = 'Hello again.';
   status(`goPine ${firmware.version} — boot and KEEP confirmed by you.`);
+  recordDiagnostic('installed', 'Watch boot and KEEP confirmed by the user.');
   $('transfer-help').textContent = 'You can close this tab. Enjoy your watch.';
 });
 window.addEventListener('beforeunload', event => {

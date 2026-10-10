@@ -47,6 +47,13 @@
           <div class="transfer-actions"><button id="connect" class="primary" aria-describedby="connect-reason" disabled>Connect &amp; update <span aria-hidden="true">↗︎</span></button><button id="pause" class="secondary" hidden>Pause</button><button id="resume" class="primary" hidden>Resume transfer</button><button id="confirmed" class="primary" hidden>It booted — I tapped KEEP</button></div>
           <button id="reset" class="text-button" hidden>Start over</button>
           <p class="field-note" id="transfer-help">Keep this tab open and your device awake during the transfer.</p>
+          <section id="diagnostics" class="diagnostics" aria-labelledby="diagnostic-title" hidden>
+            <div class="diagnostic-heading"><strong id="diagnostic-title">Connection diagnostics</strong><button id="copy-diagnostics" class="secondary">Copy diagnostics</button></div>
+            <p id="diagnostic-failure" class="diagnostic-failure" hidden></p>
+            <details id="diagnostic-details"><summary id="diagnostic-summary">Connection history</summary><pre id="diagnostic-history" tabindex="0" aria-label="Recent connection events"></pre></details>
+            <p id="diagnostic-copy-status" class="field-note" role="status" aria-live="polite"></p>
+            <div id="diagnostic-fallback" hidden><label for="diagnostic-text">Select and copy this diagnostic snapshot</label><textarea id="diagnostic-text" readonly rows="8" spellcheck="false"></textarea></div>
+          </section>
         </section>
       </div>
       <div id="error" class="error" role="alert" hidden></div>

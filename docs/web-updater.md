@@ -45,6 +45,12 @@ the same transfer session. Connection and service discovery requests allow up to
 without acknowledged progress. A timed-out native Bluetooth request must finish
 closing before another starts; Resume and Start over stay disabled until then.
 Error messages identify the connection stage and preserve the browser's error.
+If reconnect messages change too quickly to read, use **Copy diagnostics**. The
+page keeps the latest 20 connection events and the last failure, including the
+selected package version and browser. A selectable text snapshot is available if
+clipboard access is blocked. Pause/Resume retains the history; Start over clears
+it. Diagnostics stay in page memory and are copied only when you ask; they exclude
+watch identifiers, transfer session tokens, and firmware contents.
 
 **Installed 0.3.15 on Linux:** an automatic Battery Service read can trigger a
 pairing request that the watch rejects in update mode, causing a reconnect loop

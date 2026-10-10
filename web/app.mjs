@@ -1,9 +1,11 @@
 import { inspectPackage, MAX_PACKAGE_BYTES } from './firmware.mjs';
 import { DirectUpdater, UpdateError, requestWatch } from './protocol.mjs';
+import { browserSupport, connectionReadiness } from './support.mjs';
 
 const $ = id => document.getElementById(id);
-const supportsBluetooth = window.isSecureContext && Boolean(navigator.bluetooth?.requestDevice);
-const supportsValidation = window.isSecureContext && Boolean(globalThis.DecompressionStream && crypto.subtle);
+const supportsBluetooth = window.isSecureContext && typeof navigator.bluetooth?.requestDevice === 'function';
+const supportsValidation = window.isSecureContext && Boolean(globalThis.DecompressionStream && globalThis.crypto?.subtle);
+const support = browserSupport({ secure: window.isSecureContext, bluetooth: supportsBluetooth, validation: supportsValidation });
 let firmware = null;
 let release = null;
 let updater = null;
@@ -12,6 +14,8 @@ let transferring = false;
 let paused = false;
 let finished = false;
 let wakeLock = null;
+let activity = null;
+let validationError = '';
 
 function error(message = '') {
   $('error').textContent = message;
@@ -29,11 +33,19 @@ function step(number) {
 }
 function controls() {
   const locked = busy || Boolean(updater);
+  const readiness = connectionReadiness({ support, activity, firmware, validationError });
   $('file').disabled = locked || !supportsValidation;
   $('file-label').classList.toggle('disabled', $('file').disabled);
   $('latest').disabled = locked || !release || !supportsValidation;
-  $('connect').disabled = busy || !firmware || !supportsBluetooth || !supportsValidation;
+  $('connect').disabled = busy || readiness.disabled;
+  $('connect').textContent = readiness.label;
   $('connect').hidden = Boolean(updater);
+  $('connection-notice').hidden = Boolean(updater);
+  $('connection-notice').classList.toggle('unavailable', !support.available || Boolean(validationError));
+  $('connection-title').textContent = readiness.title;
+  $('connect-reason').textContent = readiness.reason;
+  $('browser-handoff').hidden = support.available;
+  $('linux-help').hidden = supportsBluetooth || !window.isSecureContext;
   $('pause').hidden = !transferring;
   $('pause').disabled = paused;
   $('resume').hidden = !paused || busy || finished;
@@ -90,14 +102,16 @@ $('file').addEventListener('change', async event => {
   const file = event.target.files[0];
   if (!file || busy || updater) return;
   busy = true;
+  activity = 'checking';
+  validationError = '';
   controls();
   error();
   status('Checking the firmware package…');
   try {
     if (file.size > MAX_PACKAGE_BYTES) throw new Error('This ZIP is too large for a goPine firmware package. Choose the application OTA ZIP from a goPine build.');
     await selectPackage(await file.arrayBuffer(), file.name);
-  } catch (e) { resetSelection(); status('Choose a valid goPine firmware package.'); error(e.message); }
-  finally { busy = false; event.target.value = ''; controls(); }
+  } catch (e) { resetSelection(); validationError = e.message; status('Choose a valid goPine firmware package.'); error(e.message); }
+  finally { busy = false; activity = null; event.target.value = ''; controls(); }
 });
 async function downloadPackage(url) {
   const response = await fetch(url, { cache: 'no-store' });
@@ -124,12 +138,14 @@ async function downloadPackage(url) {
 $('latest').addEventListener('click', async () => {
   if (!release || busy || updater) return;
   busy = true;
+  activity = 'checking';
+  validationError = '';
   controls();
   error();
   status('Downloading and checking the published firmware…');
   try { await selectPackage(await downloadPackage(release.package), `goPine ${release.version} · published release`, release.sha256); }
-  catch (e) { resetSelection(); status('Download could not be verified. Choose a ZIP to continue.'); error(e.message); }
-  finally { busy = false; controls(); }
+  catch (e) { resetSelection(); validationError = e.message; status('Download could not be verified. Choose a ZIP to continue.'); error(e.message); }
+  finally { busy = false; activity = null; controls(); }
 });
 async function transfer() {
   busy = true;
@@ -176,6 +192,7 @@ async function transfer() {
 $('connect').addEventListener('click', async () => {
   if (busy || !firmware || updater || !supportsBluetooth) return;
   busy = true;
+  activity = 'connecting';
   error();
   controls();
   status('Choose goPine Update in the Bluetooth picker.');
@@ -187,7 +204,26 @@ $('connect').addEventListener('click', async () => {
   } catch (e) {
     status('The watch is not connected. Open its update screen, then try again.');
     if (e.name !== 'NotFoundError') error(e.message || 'Bluetooth connection was not available.');
-  } finally { busy = false; controls(); }
+  } finally { busy = false; activity = null; controls(); }
+});
+$('updater-url').value = new URL('./', location.href).href;
+$('copy-flag').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('linux-flag').textContent);
+    $('flag-copy-status').textContent = 'Copied. Paste this address into Chrome’s address bar.';
+  } catch {
+    $('flag-copy-status').textContent = 'Copy the chrome:// address shown above and paste it into Chrome’s address bar.';
+  }
+});
+$('copy-link').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('updater-url').value);
+    $('copy-status').textContent = 'Link copied. Paste it into a supported browser, then choose your firmware again.';
+  } catch {
+    $('updater-url').focus();
+    $('updater-url').select();
+    $('copy-status').textContent = 'Copy the selected link, then paste it into a supported browser.';
+  }
 });
 $('pause').addEventListener('click', () => {
   if (!transferring || paused) return;
@@ -250,12 +286,12 @@ async function loadRelease() {
     $('release-description').textContent = 'Published firmware is unavailable right now. You can still choose a goPine OTA ZIP.';
   } finally { controls(); }
 }
-if (supportsBluetooth && supportsValidation) {
+if (support.available) {
   $('browser-note').textContent = 'This browser supports Bluetooth updates.';
   $('browser-note').classList.add('supported');
 } else {
-  $('browser-note').textContent = !window.isSecureContext ? 'Open this page over HTTPS to enable Bluetooth updates.' : 'For Bluetooth updates, open this page in Chrome or Edge on a supported computer, or Chrome on Android.';
-  $('transfer-help').textContent = 'Bluetooth updates aren’t available in this browser. See the browser guide below.';
+  $('browser-note').textContent = support.title + '. See the connection notice below.';
+  $('transfer-help').textContent = 'Safari and browsers on iPhone or iPad, including Chrome, do not support this updater’s Web Bluetooth connection.';
 }
 controls();
 void loadRelease();

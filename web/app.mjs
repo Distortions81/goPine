@@ -16,6 +16,7 @@ let finished = false;
 let wakeLock = null;
 let activity = null;
 let validationError = '';
+let selectionRequested = false;
 
 function error(message = '') {
   $('error').textContent = message;
@@ -49,7 +50,9 @@ function controls() {
   $('pause').hidden = !transferring;
   $('pause').disabled = paused;
   $('resume').hidden = !paused || busy || finished;
+  $('resume').disabled = Boolean(updater?.pendingOperations);
   $('reset').hidden = !updater || busy || finished;
+  $('reset').disabled = Boolean(updater?.pendingOperations);
 }
 function progress(done, total) {
   const percentage = total ? Math.floor(done * 100 / total) : 0;
@@ -98,9 +101,17 @@ async function selectPackage(bytes, name, expectedSha256) {
   $('package-details').hidden = false;
   status(supportsBluetooth ? 'Package checked. Get your watch ready, then connect.' : 'Package checked. Open this page in a browser with Web Bluetooth to connect.');
 }
+// Opening the native picker already expresses a manual choice. The release
+// lookup can finish while that picker is open, before a change event arrives.
+$('file').addEventListener('click', () => {
+  if (busy || updater) return;
+  selectionRequested = true;
+  if (!firmware) status('Choose a goPine OTA ZIP, or use the latest release.');
+});
 $('file').addEventListener('change', async event => {
   const file = event.target.files[0];
   if (!file || busy || updater) return;
+  selectionRequested = true;
   busy = true;
   activity = 'checking';
   validationError = '';
@@ -114,7 +125,16 @@ $('file').addEventListener('change', async event => {
   finally { busy = false; activity = null; event.target.value = ''; controls(); }
 });
 async function downloadPackage(url) {
-  const response = await fetch(url, { cache: 'no-store' });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try { return await readPackageDownload(url, controller.signal); }
+  catch (e) {
+    if (controller.signal.aborted) throw new Error('Firmware download timed out. Retry the latest release or choose a ZIP file.');
+    throw e;
+  } finally { clearTimeout(timeout); }
+}
+async function readPackageDownload(url, signal) {
+  const response = await fetch(url, { cache: 'no-store', signal });
   if (!response.ok) throw new Error(`Firmware download failed (${response.status}). You can choose a downloaded ZIP instead.`);
   if (Number(response.headers.get('content-length')) > MAX_PACKAGE_BYTES) throw new Error('Firmware download exceeds the package size limit.');
   const reader = response.body.getReader();
@@ -135,8 +155,9 @@ async function downloadPackage(url) {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return bytes.buffer;
 }
-$('latest').addEventListener('click', async () => {
-  if (!release || busy || updater) return;
+async function useLatestRelease() {
+  if (!release || busy || updater || !supportsValidation) return;
+  selectionRequested = true;
   busy = true;
   activity = 'checking';
   validationError = '';
@@ -146,7 +167,8 @@ $('latest').addEventListener('click', async () => {
   try { await selectPackage(await downloadPackage(release.package), `goPine ${release.version} · published release`, release.sha256); }
   catch (e) { resetSelection(); validationError = e.message; status('Download could not be verified. Choose a ZIP to continue.'); error(e.message); }
   finally { busy = false; activity = null; controls(); }
-});
+}
+$('latest').addEventListener('click', useLatestRelease);
 async function transfer() {
   busy = true;
   transferring = true;
@@ -199,7 +221,8 @@ $('connect').addEventListener('click', async () => {
   try {
     // Keep requestDevice in this user gesture; firmware is already validated.
     const device = await requestWatch();
-    updater = new DirectUpdater({ device, image: firmware.image, onProgress: progress, onState });
+    updater = new DirectUpdater({ device, image: firmware.image, onProgress: progress, onState,
+      onPendingChange: () => { if (!updater?.active) controls(); } });
     await transfer();
   } catch (e) {
     status('The watch is not connected. Open its update screen, then try again.');
@@ -218,7 +241,7 @@ $('copy-flag').addEventListener('click', async () => {
 $('copy-link').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText($('updater-url').value);
-    $('copy-status').textContent = 'Link copied. Paste it into a supported browser, then choose your firmware again.';
+    $('copy-status').textContent = 'Link copied. Paste it into a supported browser to load the latest release.';
   } catch {
     $('updater-url').focus();
     $('updater-url').select();
@@ -232,9 +255,9 @@ $('pause').addEventListener('click', () => {
   status('Pausing the transfer…');
   controls();
 });
-$('resume').addEventListener('click', () => { if (updater && !busy && paused && !finished) void transfer(); });
+$('resume').addEventListener('click', () => { if (updater && !busy && paused && !finished && !updater.pendingOperations) void transfer(); });
 $('reset').addEventListener('click', () => {
-  if (busy) return;
+  if (busy || updater?.pendingOperations) return;
   updater?.disconnect();
   updater = null;
   paused = false;
@@ -271,19 +294,24 @@ async function loadRelease() {
     const candidate = manifest.firmware;
     if (!candidate) {
       $('release-description').textContent = 'No compatible firmware release is published yet. Choose an OTA ZIP from your goPine build.';
+      if (!selectionRequested && !busy && !updater) status('Choose a goPine OTA ZIP to get started.');
       return;
     }
     if (!/^firmware\/gopine-dfu-\d+\.\d+\.\d+(?:\+\d+)?\.zip$/.test(candidate.package) || !/^[a-f0-9]{64}$/.test(candidate.sha256) || typeof candidate.version !== 'string' || candidate.version.length > 40) throw new Error('Release metadata is invalid.');
     release = candidate;
     $('latest').textContent = `Use release ${release.version}`;
-    $('release-description').textContent = `goPine ${release.version} is available from GitHub Releases. You can also use a local build.`;
+    $('release-description').textContent = `goPine ${release.version} is the latest published release. You can also choose a local build.`;
     const releaseUrl = new URL(candidate.releaseUrl);
     if (releaseUrl.origin === 'https://github.com' && releaseUrl.pathname.startsWith('/Distortions81/goPineTime/releases/tag/')) {
       $('release-link').href = releaseUrl.href;
       $('release-link').hidden = false;
     }
+    // A delayed release lookup must not replace a ZIP the user already chose.
+    if (!selectionRequested && !firmware && !updater && !busy && supportsValidation) await useLatestRelease();
+    else if (!supportsValidation && !selectionRequested) status('Open this page in a browser that can check firmware packages.');
   } catch {
     $('release-description').textContent = 'Published firmware is unavailable right now. You can still choose a goPine OTA ZIP.';
+    if (!selectionRequested && !busy && !updater) status('Choose a goPine OTA ZIP to get started.');
   } finally { controls(); }
 }
 if (support.available) {

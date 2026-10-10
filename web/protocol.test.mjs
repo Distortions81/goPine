@@ -23,13 +23,14 @@ class MockWatch {
       connect: () => this.call(async () => {
         this.connections++;
         if (options.failConnect?.(this)) throw new DOMException('Disconnected', 'NetworkError');
+        await options.onConnect?.(this);
         this.gatt.connected = true;
         return this.server;
       }),
-      disconnect: () => { this.gatt.connected = false; },
+      disconnect: () => { this.gatt.connected = false; options.onDisconnect?.(this); },
     };
-    this.server = {getPrimaryService: uuid => this.call(() => {
-      assert.equal(uuid, UUIDS.service); return this.service;
+    this.server = {getPrimaryService: uuid => this.call(async () => {
+      assert.equal(uuid, UUIDS.service); await options.onService?.(this); return this.service;
     })};
     this.service = {getCharacteristic: uuid => this.call(() => {
       if (uuid === UUIDS.status) return {readValue: () => this.read()};
@@ -117,7 +118,7 @@ test('transfers sequentially with 12-byte payloads and delayed flash acknowledge
   assert.deepEqual(watch.received, image);
   assert.deepEqual(watch.commands, [1, 2]);
   assert.deepEqual(progress, [0, 12, 24, 36, 48, 60, 72, 84, 96, 101]);
-  assert.deepEqual(states, ['connecting', 'sending', 'verifying', 'ready']);
+  assert.deepEqual(states, ['connecting', 'connecting', 'connecting', 'sending', 'verifying', 'ready']);
   assert.equal(watch.gatt.connected, false);
 });
 test('reconnects after a lost write response using the authoritative received offset', async () => {
@@ -205,23 +206,150 @@ test('does not silently restart when the watch clears previously acknowledged da
   await assert.rejects(instance.run(), /cleared this transfer/);
   assert.deepEqual(watch.commands, [1]);
 });
-test('times out missing acknowledgements without sending the next chunk', async () => {
+test('bounds persistent missing acknowledgements without advancing to another chunk', async () => {
   const watch = new MockWatch({onWrite: watch => { watch.pending = null; }});
-  await assert.rejects(updater(watch, {timing: {...timing, ackTimeoutMs: 5}}).run(), error => error.retryable && /acknowledgement timed out/.test(error.message));
-  assert.equal(watch.writes.length, 1);
+  await assert.rejects(updater(watch, {timing: {...timing, ackTimeoutMs: 5}}).run(), error => error.retryable && error.code === 'NO_PROGRESS');
+  assert.ok(watch.connections > 1);
+  assert.ok(watch.writes.length > 1);
+  assert.ok(watch.writes.every(write => write.offset === 0));
+  assert.equal(watch.maxInflight, 1);
   assert.deepEqual(watch.commands, [1]);
 });
 test('times out verification without claiming success or issuing install', async () => {
   const watch = new MockWatch({onControl: (watch, command) => { if (command === 2) watch.pending = null; }});
   const states = [];
-  await assert.rejects(updater(watch, {timing: {...timing, verifyTimeoutMs: 5}, onState: state => states.push(state.phase)}).run(), /timed out/);
+  await assert.rejects(updater(watch, {timing: {...timing, verifyTimeoutMs: 5}, onState: state => states.push(state.phase)}).run(), error => error.code === 'NO_PROGRESS');
   assert.equal(states.includes('ready'), false);
   assert.deepEqual(watch.commands, [1, 2]);
 });
 test('bounds automatic reconnect attempts and makes their failure resumable', async () => {
   const watch = new MockWatch({failConnect: () => true});
-  await assert.rejects(updater(watch, {timing: {...timing, noProgressTimeoutMs: 5}}).run(), error => error.retryable && /Could not reconnect/.test(error.message));
+  const states = [];
+  await assert.rejects(updater(watch, {timing: {...timing, noProgressTimeoutMs: 5}, onState: state => states.push(state)}).run(),
+    error => error.retryable && error.code === 'NO_PROGRESS' && error.stage === 'connecting to the watch' && /Disconnected/.test(error.message));
+  assert.ok(states.some(state => state.phase === 'reconnecting' && /connecting to the watch.*Disconnected/.test(state.message)));
   assert.ok(watch.connections > 1); assert.equal(watch.writes.length, 0);
+});
+test('recovers an acknowledgement timeout without retransmitting committed bytes', async () => {
+  let blocked = true;
+  const watch = new MockWatch({onWrite: watch => {
+    if (blocked) watch.pending.waits = Infinity;
+  }, onDisconnect: watch => {
+    if (blocked && watch.pending) {
+      watch.pending.commit(); watch.pending = null; blocked = false;
+    }
+  }});
+  const instance = updater(watch, {timing: {...timing, ackTimeoutMs: 5, noProgressTimeoutMs: 200}});
+  await instance.run();
+  assert.equal(watch.connections, 2);
+  assert.equal(watch.maxInflight, 1);
+  assert.deepEqual(watch.writes.map(write => write.offset), [0, 12, 24, 36, 48, 60, 72, 84, 96]);
+  assert.deepEqual(watch.commands, [1, 2]);
+  assert.deepEqual(watch.received, image);
+});
+test('recovers a verification timeout by reading READY without repeating VERIFY', async () => {
+  const watch = new MockWatch({verifyDelay: Infinity, onDisconnect: watch => {
+    if (watch.status.phase === PHASE.VERIFYING && watch.pending) {
+      watch.pending.commit(); watch.pending = null;
+    }
+  }});
+  const instance = updater(watch, {timing: {...timing, verifyTimeoutMs: 5, noProgressTimeoutMs: 200}});
+  await instance.run();
+  assert.equal(watch.connections, 2);
+  assert.deepEqual(watch.commands, [1, 2]);
+  assert.equal(watch.maxInflight, 1);
+  assert.deepEqual(watch.received, image);
+});
+test('allows connection and service discovery longer than ordinary requests', async () => {
+  const delay = () => new Promise(resolve => setTimeout(resolve, 15));
+  const watch = new MockWatch({onConnect: delay, onService: delay});
+  await updater(watch, {timing: {...timing, operationTimeoutMs: 5, connectTimeoutMs: 100, noProgressTimeoutMs: 200}}).run();
+  assert.equal(watch.connections, 1);
+  assert.deepEqual(watch.received, image);
+});
+test('drains timed-out writes that resolve or reject before reconnecting from committed bytes', async () => {
+  for (const outcome of ['resolve', 'reject']) {
+    let releaseWrite, first = true, releaseScheduled = false;
+    const held = new Promise((resolve, reject) => {
+      releaseWrite = outcome === 'resolve' ? resolve : () => reject(new DOMException('Late disconnect', 'NetworkError'));
+    });
+    const watch = new MockWatch({onWrite: async () => {
+      if (first) { first = false; await held; }
+    }, onDisconnect: watch => {
+      if (!first && !releaseScheduled && watch.pending) {
+        releaseScheduled = true;
+        watch.pending.commit(); watch.pending = null;
+        setTimeout(releaseWrite, 5);
+      }
+    }});
+    const pending = [];
+    const instance = updater(watch, {onPendingChange: count => pending.push(count),
+      timing: {...timing, operationTimeoutMs: 5, cleanupTimeoutMs: 50, noProgressTimeoutMs: 200}});
+    await instance.run();
+    assert.equal(watch.connections, 2);
+    assert.equal(watch.maxInflight, 1);
+    assert.equal(instance.pendingOperations, 0);
+    assert.ok(pending.every(count => count === 0 || count === 1));
+    assert.equal(pending.at(-1), 0);
+    assert.ok(pending.every((count, index) => count === (index % 2 === 0 ? 1 : 0)), 'Each started operation notifies a matching settlement');
+    assert.deepEqual(watch.writes.map(write => write.offset), [0, 12, 24, 36, 48, 60, 72, 84, 96]);
+    assert.deepEqual(watch.received, image);
+  }
+});
+test('connection and service discovery failures retain different diagnostic stages', async () => {
+  const watch = new MockWatch({onService: () => { throw new DOMException('Service discovery disconnected', 'NetworkError'); }});
+  const states = [];
+  await assert.rejects(updater(watch, {timing: {...timing, noProgressTimeoutMs: 20}, onState: state => states.push(state)}).run(),
+    error => error.code === 'NO_PROGRESS' && error.stage === 'finding the update service' && /Service discovery disconnected/.test(error.message));
+  assert.ok(states.some(state => state.phase === 'reconnecting' && /finding the update service.*Service discovery disconnected/.test(state.message)));
+  assert.equal(watch.writes.length, 0);
+  assert.equal(watch.maxInflight, 1);
+});
+test('pauses boundedly for a native operation that does not settle, with a useful stage', async () => {
+  let releaseConnection;
+  const held = new Promise(resolve => { releaseConnection = resolve; });
+  const watch = new MockWatch({onConnect: () => held});
+  const instance = updater(watch, {timing: {...timing, connectTimeoutMs: 5, cleanupTimeoutMs: 5, noProgressTimeoutMs: 200}});
+  await assert.rejects(instance.run(), error => error.retryable && error.code === 'BLUETOOTH_CLOSING' && error.stage === 'connecting to the watch');
+  assert.equal(instance.pendingOperations, 1);
+  await assert.rejects(instance.run(), error => error.code === 'BLUETOOTH_CLOSING');
+  assert.equal(watch.connections, 1);
+  releaseConnection();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(instance.pendingOperations, 0);
+  assert.equal(watch.gatt.connected, false, 'A late connection must not revive the retired run');
+  await instance.run();
+  assert.equal(watch.maxInflight, 1);
+  assert.deepEqual(watch.received, image);
+});
+test('pause interrupts native-operation cleanup without reconnecting', async () => {
+  let releaseWrite, reachedCleanup;
+  const held = new Promise(resolve => { releaseWrite = resolve; });
+  const cleanup = new Promise(resolve => { reachedCleanup = resolve; });
+  const watch = new MockWatch({onWrite: () => held});
+  const instance = updater(watch, {timing: {...timing, operationTimeoutMs: 5, cleanupTimeoutMs: 200, noProgressTimeoutMs: 200},
+    onState: ({phase}) => { if (phase === 'reconnecting') reachedCleanup(); }});
+  const run = instance.run();
+  await cleanup;
+  instance.stop();
+  await assert.rejects(run, {name: 'AbortError'});
+  assert.equal(watch.connections, 1);
+  assert.equal(watch.writes.length, 1);
+  assert.equal(instance.pendingOperations, 1);
+  releaseWrite();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(instance.pendingOperations, 0);
+  assert.equal(watch.maxInflight, 1);
+});
+test('caps even a successful slow connection by the overall no-progress budget', async () => {
+  const watch = new MockWatch({onConnect: () => new Promise(resolve => setTimeout(resolve, 30))});
+  const instance = updater(watch, {timing: {...timing, connectTimeoutMs: 200, cleanupTimeoutMs: 100, noProgressTimeoutMs: 5}});
+  await assert.rejects(instance.run(), error => error.retryable && ['NO_PROGRESS', 'BLUETOOTH_CLOSING'].includes(error.code));
+  assert.equal(watch.connections, 1);
+  assert.equal(watch.writes.length, 0);
+  await new Promise(resolve => setTimeout(resolve, 35));
+  assert.equal(instance.pendingOperations, 0);
+  assert.equal(watch.gatt.connected, false);
 });
 test('copies the firmware and rejects concurrent run calls', async () => {
   const source = image.slice(), watch = new MockWatch();

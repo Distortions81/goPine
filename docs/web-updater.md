@@ -15,13 +15,15 @@ platform requirements, including Linux configuration.
 On **Linux Chrome**, if a ZIP shows **Checked** but the button says **Bluetooth
 unavailable**, open `chrome://flags/#enable-experimental-web-platform-features`,
 set **Experimental Web Platform features** to **Enabled**, and relaunch Chrome.
-Then reopen the updater and choose the firmware again. The page provides a
+Then reopen the updater; the latest release loads automatically. The page provides a
 **Copy Linux setup address** button and links to Chrome's guide beside the
 connection control. This setting exposes the Bluetooth API; it does not choose
 or connect to a watch automatically.
 
-1. Select the published firmware offered on the page, or choose an application
-   DFU ZIP downloaded or built from this project.
+1. Wait for the latest published firmware to download and show **Checked**, or
+   choose an application DFU ZIP downloaded or built from this project. A manual
+   selection is never replaced by a delayed release lookup. Loading firmware
+   does not connect to a watch.
 2. Disconnect phone companion apps, keep the watch nearby, and open **Settings →
    Firmware Update** on the watch. Hold the on-watch control until it is ready
    to connect. Stay in goPine; this flow does not use the recovery clock.
@@ -36,6 +38,13 @@ the page loses its transfer session; use Cancel/Retry on the watch before starti
 a new session. Stopping the browser transfer does not install firmware. Installation
 and KEEP remain physical watch actions, and the page cannot confirm a successful
 boot on its own.
+
+Transient Bluetooth requests and watch acknowledgement timeouts reconnect using
+the same transfer session. Connection and service discovery requests allow up to
+30 seconds, other Bluetooth requests 15 seconds, and retries stop after 90 seconds
+without acknowledged progress. A timed-out native Bluetooth request must finish
+closing before another starts; Resume and Start over stay disabled until then.
+Error messages identify the connection stage and preserve the browser's error.
 
 The page validates the application package, image hash, link addresses and size
 before transfer. The watch also validates the completed image before offering

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Release version, artifact integrity, and publication input checks (offline)."""
+import binascii
 import hashlib
 import json
 import pathlib
+import struct
 import tempfile
 import unittest
 import zipfile
@@ -26,22 +28,26 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.source = pathlib.Path(self.temp.name)
         self.output = self.source / 'release'
-        image, init = fixture()
+        image, _ = fixture()
+        image = bytearray(image)
+        struct.pack_into('<BBHI', image, 20, 0, 3, 15, 0)
+        image[56:] = hashlib.sha256(image[:48]).digest()
+        init = bytes.fromhex('5200ffffffffffff0100feff') + struct.pack('<H', binascii.crc_hqx(image, 0xffff))
         manifest = {'manifest': {'dfu_version': 0.5,
                                 'application': {'bin_file': 'app.bin', 'dat_file': 'app.dat'}}}
-        with zipfile.ZipFile(self.source / 'gopine-dfu-0.3.4.zip', 'w') as archive:
+        with zipfile.ZipFile(self.source / 'gopine-dfu-0.3.15.zip', 'w') as archive:
             archive.writestr('manifest.json', json.dumps(manifest))
             archive.writestr('app.bin', image)
             archive.writestr('app.dat', init)
-        self.report = self.source / 'gopine-resources-0.3.4.json'
+        self.report = self.source / 'gopine-resources-0.3.15.json'
         self.report.write_text(json.dumps({'errors': []}))
 
     def stage(self):
-        stage('v0.3.4', 'a'*40, 'owner/repo', self.source, self.output)
+        stage('v0.3.15', 'a'*40, 'owner/repo', self.source, self.output)
 
     def test_release_contains_only_intended_assets_with_matching_checksums(self):
         self.stage()
-        expected = {'gopine-dfu-0.3.4.zip', 'gopine-resources-0.3.4.json',
+        expected = {'gopine-dfu-0.3.15.zip', 'gopine-resources-0.3.15.json',
                     'build-info.json', 'INSTALL.md'}
         self.assertEqual({p.name for p in self.output.iterdir()}, expected | {'SHA256SUMS'})
         sums = (self.output / 'SHA256SUMS').read_text().splitlines()
@@ -51,8 +57,23 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((self.output / name).read_bytes()).hexdigest(), digest)
         info = json.loads((self.output / 'build-info.json').read_text())
         self.assertEqual(info['commit'], 'a'*40)
-        self.assertEqual(info['version'], '0.3.4')
+        self.assertEqual(info['version'], '0.3.15')
         self.assertEqual(info['sha256'], hashlib.sha256((self.output / info['package']).read_bytes()).hexdigest())
+
+    def test_install_notes_prioritize_browser_and_retain_recovery(self):
+        self.stage()
+        notes = (self.output / 'INSTALL.md').read_text()
+        self.assertIn('https://owner.github.io/repo/', notes)
+        self.assertIn('**BLE builds of goPine 0.3.13 or later**', notes)
+        self.assertIn('**Connect & update**', notes)
+        self.assertIn('**INSTALL**', notes)
+        self.assertIn('**KEEP**', notes)
+        self.assertIn('browser updater cannot connect to the InfiniTime recovery clock', notes)
+        self.assertLess(notes.index('## Update from goPine'), notes.index('## Install from older'))
+        self.assertLess(notes.index('## Install from older'), notes.index('## Recovery reference'))
+        for color in ['Green', 'Blue', 'Red']:
+            self.assertIn(f'**{color}', notes)
+        self.assertNotIn('Bluetooth stays off outside Sync Time', notes)
 
     def test_failed_resource_gate_never_stages_assets(self):
         for report in [{'errors': ['stack exceeds budget']}, {}]:
@@ -63,9 +84,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_does_not_mix_stale_assets_or_accept_invalid_provenance(self):
         with self.assertRaises(ValueError):
-            stage('v0.3.4', 'HEAD', 'owner/repo', self.source, self.output)
+            stage('v0.3.15', 'HEAD', 'owner/repo', self.source, self.output)
         with self.assertRaises(ValueError):
-            stage('v0.3.4', 'a'*40, 'owner/repo/other', self.source, self.output)
+            stage('v0.3.15', 'a'*40, 'owner/repo/other', self.source, self.output)
         self.output.mkdir()
         (self.output / 'stale.zip').write_bytes(b'keep')
         with self.assertRaises(ValueError):

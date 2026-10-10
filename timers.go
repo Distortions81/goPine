@@ -167,6 +167,7 @@ func (u *watchUI) tickTimers(now time.Time, state updateState) bool {
 				r.alertPending = false
 			}
 			u.cancelHold()
+			u.powerNotice = false
 			u.sync.Cancel()
 			u.page = pageAlert // Interrupt/discard drafts and any armed updater hold.
 			return true

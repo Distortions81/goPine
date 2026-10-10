@@ -169,15 +169,17 @@ func TestTouchWakeSettingDefaultsOffAndRepaints(t *testing.T) {
 	}
 	u.handle(inputEvent{Kind: inputSwipeLeft}, now, firmwareConfirmed, powerStatus{})
 	before := u.frameKey(now, powerStatus{})
-	tap := inputEvent{Kind: inputTap, X: 120, Y: 196}
+	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 196}, now, firmwareConfirmed, powerStatus{})
+	tap := inputEvent{Kind: inputTap, X: 120, Y: 80}
 	u.handle(tap, now, firmwareConfirmed, powerStatus{})
-	if !u.touchWake || u.page != pageSettings || u.frameKey(now, powerStatus{}) == before {
+	if !u.touchWake || u.page != pageDisplaySettings || u.frameKey(now, powerStatus{}) == before {
 		t.Fatal("toggle did not enable/repaint in settings")
 	}
 	u.handle(tap, now, firmwareConfirmed, powerStatus{})
 	if u.touchWake {
 		t.Fatal("second tap did not disable touch wake")
 	}
+	u.handle(inputEvent{Kind: inputTap, X: 20, Y: 20}, now, firmwareConfirmed, powerStatus{})
 	u.handle(inputEvent{Kind: inputTap, X: 20, Y: 20}, now, firmwareConfirmed, powerStatus{})
 	if u.page != pageClock {
 		t.Fatal("settings back arrow stopped working")

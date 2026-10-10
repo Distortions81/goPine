@@ -12,4 +12,6 @@ struct ble_npl_callout { struct ble_npl_event ev; struct ble_npl_eventq *evq; st
 struct ble_npl_mutex { unsigned depth; };
 struct ble_npl_sem { uint16_t count; };
 void gopine_ble_pump(void);
+void gopine_ble_set_host_queue(struct ble_npl_eventq *q);
+uint32_t gopine_ble_next_work(void);
 #endif

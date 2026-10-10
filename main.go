@@ -85,6 +85,11 @@ func openApplication() (*watchApplication, error) {
 
 	loop := watchLoop{display: display, ui: &ui, sync: &syncController, renderer: &renderer,
 		now: time.Now, state: firmwareState}
+	updater := &directUpdater{sync: &syncController, openFlash: openUpdateFlash,
+		confirmed: func() bool { return firmwareState() == firmwareConfirmed },
+		powerOK:   func() bool { return updatePowerOK(display.PowerStatus()) },
+		reboot:    func() error { return restartUpdatedFirmware(beforeReset) }}
+	loop.updater = updater
 	loop.save = func(now time.Time, power powerStatus) time.Time {
 		allowed := updatePowerOK(power) && !syncController.running && !ui.timers.active && firmwareState() == firmwareConfirmed
 		settings.update(&ui, now, allowed)
@@ -106,14 +111,19 @@ func openApplication() (*watchApplication, error) {
 			// Recheck actual power at the flash boundary, not just cached UI data.
 			if !updatePowerOK(display.PowerStatus()) {
 				ui.showMessage("Charge to at least 20 percent first.")
-			} else if err := startFirmwareUpdate(progress("Starting updater"), beforeReset); err != nil {
-				ui.showMessage("Could not start updater. Check recovery with wired setup.")
+			} else if _, ok := syncController.radio.(directUpdateRadio); !ok {
+				ui.showMessage("Bluetooth updater unavailable in this build.")
+			} else {
+				ui.beginDirectUpdate(time.Now())
 			}
+		case actionInstallUpdate:
+			updater.install(&ui)
 		}
 	}
 	return &watchApplication{
 		loop: loop,
 		close: func() {
+			_ = updater.release()
 			syncController.close()
 			activeTimeRadio = nil
 			_ = display.Close()
@@ -138,15 +148,26 @@ type frameKey struct {
 	power                                    chargeState
 	use24, holding, approximate, initialized bool
 	syncOpen, syncPending                    bool
-	touchWake                                bool
+	touchWake, flipScreen                    bool
+	weatherRevision                          uint32
+	notificationRevision                     uint32
 }
 
 // Keep calendar temporaries out of the long-lived event loop frame.
 //
 //go:noinline
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
+	if u.pairingVisible() {
+		return frameKey{page: pagePairing, step: int(u.pairing.code)}
+	}
+	if u.page == pagePairingSettings && u.pairing != nil {
+		return frameKey{page: pagePairingSettings, step: u.pairing.status, holding: u.pairing.confirm, message: u.pairing.note}
+	}
+	if u.powerNoticeVisible() {
+		return frameKey{page: pageCharging, percent: power.Percent, power: power.State}
+	}
 	key := frameKey{page: u.page, message: u.message, settingsNote: u.settingsNote,
-		use24: u.use24, touchWake: u.touchWake, holding: u.holding, step: u.holdStep, edit: u.edit,
+		use24: u.use24, touchWake: u.touchWake, flipScreen: u.flipScreen, holding: u.holding, step: u.holdStep, edit: u.edit,
 		approximate: u.clock.approximate, initialized: u.clock.initialized,
 		percent: power.Percent, power: power.State, timer: u.timerFrameKey(now)}
 	if u.page == pageClock || u.page == pageAlert {
@@ -161,6 +182,36 @@ func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 		} else if u.sync.Open {
 			key.syncSecond = int64(max(0, (u.sync.Expires.Sub(now)+time.Second-1)/time.Second))
 		}
+	}
+	if weatherPage(u.page) && u.weather != nil {
+		w := u.weather
+		key.weatherRevision, key.message, key.use24, key.syncOpen = w.revision, w.status, w.fahrenheit, w.open
+		key.clockMinute = calendarMillis(u.clock.Now(now)) / 60000
+		if w.open {
+			key.syncSecond = int64(max(0, w.expires.Sub(now)+time.Second-1) / time.Second)
+		}
+	}
+	if (u.page == pageMusic || u.page == pagePhone) && u.phone != nil {
+		p := u.phone
+		key.weatherRevision, key.message, key.step = p.revision, p.status, int(p.mode)
+		if p.mode == phoneSession {
+			key.syncSecond = int64(max(0, p.expires.Sub(now)+time.Minute-1) / time.Minute)
+		}
+	}
+	if u.page == pageClock {
+		key.notificationRevision = uint32(u.unreadNotifications())
+	}
+	if (u.page == pageInbox || u.page == pageNotification) && u.notifications != nil {
+		n := u.notifications
+		key.notificationRevision, key.weatherRevision = n.inbox.Revision, n.selected
+		key.step, key.touchWake = n.offset, n.quiet
+	}
+	if u.page == pageTransfer && u.transfer != nil {
+		t := u.transfer
+		key.step = t.percent
+		key.message = t.message
+		key.syncStatus = t.version
+		key.weatherRevision = uint32(t.phase)
 	}
 	return key
 }

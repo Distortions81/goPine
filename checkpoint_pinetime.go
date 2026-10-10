@@ -14,7 +14,8 @@ import (
 )
 
 // Stock MCUboot scratch ends at 0x7cfff. The last two internal pages are
-// otherwise unused; leave 0x7d000 spare. Never access UICR or external flash.
+// used only by the clock/settings journal; BLE bonds use 0x7d000 separately.
+// This driver never accesses UICR, the bond page, or external flash.
 const clockJournalBase = uintptr(0x7e000)
 
 type clockFlash struct{}

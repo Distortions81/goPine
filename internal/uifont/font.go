@@ -29,9 +29,8 @@ type glyph struct {
 func (f *Font) GetYAdvance() uint8             { return f.lineHeight }
 func (f *Font) VerticalBounds() (int16, int16) { return f.pixelTop, f.pixelBottom }
 
-// Like TinyFont's const fonts, this returns one reusable glyph and is intended
-// for the single display goroutine, not concurrent rendering.
-func (f *Font) GetGlyph(r rune) tinyfont.Glypher {
+// Resolve the dense or sparse repertoire and its unsupported-rune fallback.
+func (f *Font) glyphIndex(r rune) (rune, int) {
 	index := int(r - f.first)
 	if r < f.first || r > f.last {
 		r = f.first
@@ -53,6 +52,37 @@ func (f *Font) GetGlyph(r rune) tinyfont.Glypher {
 			r, index = f.first, 0
 		}
 	}
+	return r, index
+}
+
+// LineWidth preserves TinyFont's inner/outbox metrics without decoding bitmap
+// packets or changing the reusable glyph just to measure text.
+func (f *Font) LineWidth(text string) (inner, outer uint32) {
+	if len(text) == 0 {
+		return
+	}
+	for _, r := range text {
+		_, index := f.glyphIndex(r)
+		i := index * 3
+		offset := int(f.index[i])<<16 | int(f.index[i+1])<<8 | int(f.index[i+2])
+		outer += uint32(f.data[offset+2])
+	}
+	metric := func(r rune) (width, advance uint8, offset int8) {
+		_, index := f.glyphIndex(r)
+		i := index * 3
+		at := int(f.index[i])<<16 | int(f.index[i+1])<<8 | int(f.index[i+2])
+		return f.data[at] & 127, f.data[at+2], int8(f.data[at+3])
+	}
+	_, _, first := metric(rune(text[0]))
+	width, advance, last := metric(rune(text[len(text)-1]))
+	inner = outer - uint32(first) - uint32(advance) + uint32(last) + uint32(width)
+	return
+}
+
+// Like TinyFont's const fonts, this returns one reusable glyph for the single
+// display goroutine. It is not intended for concurrent rendering.
+func (f *Font) GetGlyph(r rune) tinyfont.Glypher {
+	r, index := f.glyphIndex(r)
 	i := index * 3
 	offset := int(f.index[i])<<16 | int(f.index[i+1])<<8 | int(f.index[i+2])
 	d := f.data[offset:]
@@ -90,14 +120,54 @@ func (g *glyph) Draw(d drivers.Displayer, x, y int16, c color.RGBA) {
 	if x0 >= x1 || y0 >= y1 || c.A == 0 {
 		return
 	}
-	// A glyph uses only sixteen coverage values. Scale each once, rather than
-	// multiplying all four channels for every covered pixel.
-	var colors [16]color.RGBA
+	colors := coverageColors(c)
+	g.drawPixels(d, x, y, x0, y0, x1, y1, &colors)
+}
+
+func coverageColors(c color.RGBA) (colors [16]color.RGBA) {
 	for i := 1; i < len(colors); i++ {
 		colors[i] = gfx.Coverage(c, uint8(i)*17)
 	}
+	return
+}
+
+// DrawText shares one coverage palette across a line instead of rebuilding
+// sixteen premultiplied colors for every glyph. No palette is retained in RAM.
+func (f *Font) DrawText(d drivers.Displayer, x, y int16, text string, c color.RGBA) {
+	if c.A == 0 || text == "" {
+		return
+	}
+	colors := coverageColors(c)
+	l, t, r, b := 0, 0, 0, 0
+	clipped := false
+	if clip, ok := d.(interface{ ClipBounds() (int, int, int, int) }); ok {
+		l, t, r, b = clip.ClipBounds()
+		clipped = true
+	}
+	start := x
+	for _, ch := range text {
+		if ch == '\n' || ch == '\r' {
+			x, y = start, y+int16(f.lineHeight)
+			continue
+		}
+		f.GetGlyph(ch)
+		g := &f.glyph
+		gx, gy := x+int16(g.info.XOffset), y+int16(g.info.YOffset)
+		x0, y0, x1, y1 := 0, 0, int(g.info.Width), int(g.info.Height)
+		if clipped {
+			x0, y0 = max(0, l-int(gx)), max(0, t-int(gy))
+			x1, y1 = min(x1, r-int(gx)), min(y1, b-int(gy))
+		}
+		if x0 < x1 && y0 < y1 {
+			g.drawPixels(d, gx, gy, x0, y0, x1, y1, &colors)
+		}
+		x += int16(g.info.XAdvance)
+	}
+}
+
+func (g *glyph) drawPixels(d drivers.Displayer, x, y int16, x0, y0, x1, y1 int, colors *[16]color.RGBA) {
 	if g.compressed {
-		g.drawPackets(d, x, y, x0, y0, x1, y1, &colors)
+		g.drawPackets(d, x, y, x0, y0, x1, y1, colors)
 		return
 	}
 	for yy := y0; yy < y1; yy++ {

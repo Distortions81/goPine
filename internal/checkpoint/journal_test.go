@@ -425,3 +425,39 @@ func TestCommittedButUncertainWriteRequiresReopen(t *testing.T) {
 		t.Fatal("sequence was reused", r)
 	}
 }
+
+func TestSaveReusesInterruptedSlotBuffer(t *testing.T) {
+	base := newFlash()
+	original := mustOpen(t, base)
+	if err := original.Save(100, false); err != nil {
+		t.Fatal(err)
+	}
+	// Torn records can occupy every remaining slot; a retry must skip them.
+	for slot := 1; slot < slots; slot++ {
+		base.data[recordOffset(0, slot)] = 0
+	}
+	allocs := testing.AllocsPerRun(10, func() {
+		f := *base
+		j := *original
+		j.flash = &f
+		if err := j.Save(101, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs > 8 {
+		t.Fatalf("allocated per interrupted slot: %.0f allocations", allocs)
+	}
+}
+
+func TestFlipRecordCompatibility(t *testing.T) {
+	r := Record{HasSettings: true, Settings: Settings{CountdownSeconds: 300}}
+	b := encode(r)
+	if got, ok := decode(&b); !ok || got.Settings.FlipScreen {
+		t.Fatal("legacy zero byte must mean normal orientation")
+	}
+	r.Settings.FlipScreen = true
+	b = encode(r)
+	if got, ok := decode(&b); !ok || !got.Settings.FlipScreen {
+		t.Fatal("flip did not round-trip")
+	}
+}

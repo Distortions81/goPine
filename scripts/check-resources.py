@@ -20,6 +20,8 @@ TICK = "(*main.watchUI).tickTimers"
 FLUSH = "(*main.settingsPersistence).flush"
 SAVE = "(*github.com/Distortions81/goPine/internal/checkpoint.Journal).save"
 RESERVE = 2048
+PORT_ISR = "gopine_port_interrupt"
+INPUT_VECTORS = "main.inputVectors"
 
 
 def parse_symbols(text):
@@ -87,9 +89,25 @@ def audit(symbols, by_address, task_stack):
         "timer": live + sizes[TICK] + frame("(*main.watchUI).loadRuntime", False) + calendar,
         "settings_save": live + callback + sizes[FLUSH] + max(sizes[SAVE], snapshot + calendar),
         "input": live + frame("(*main.watchUI).handle", False) + callback,
+        "frame_change": live + frame("main.changedStrips", False),
+        "phone_update": live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updatePhone", False) + max(frame("(main.pineTimeRadio).TakeMusic", False), frame("(main.pineTimeRadio).TakeWeather", False)),
+        "notification_update": live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updatePhone", False) + frame("(*main.watchUI).receiveNotifications", False) + max(frame("(main.pineTimeRadio).TakeNotification", False), frame("(*github.com/Distortions81/goPine/internal/notifications.Inbox).Add", False)),
+        "weather_update": live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updateWeather", False) + frame("(main.pineTimeRadio).TakeWeather", False),
+        "pairing_update": live + frame("(*main.timeSyncController).updatePairing", False) + frame("(main.pineTimeRadio).ForgetPhone", False),
+        "render": live + frame("(*main.frameRenderer).renderStrips", False) + frame("(*main.watchLoop).run$1", False),
     }
+    verify = frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Verify", False) + frame("github.com/Distortions81/goPine/internal/ota.Validate", False)
+    paths["direct_update"] = live + frame("(*main.directUpdater).tick", False) + max(
+        frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Write", False),
+        frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Begin", False) + frame("github.com/Distortions81/goPine/internal/ota.checkErasedTrailer", False), verify)
+    paths["direct_install"] = live + callback + frame("(*main.directUpdater).install", False) + frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Commit", False) + verify
     heap = symbols["_heap_end"] - symbols["_heap_start"]
     errors = []
+    port_frame = frame(PORT_ISR)
+    if port_frame > 256:
+        errors.append(f"GPIO PORT interrupt frame exceeds 256 bytes: {port_frame}")
+    if symbols[INPUT_VECTORS] & 255:
+        errors.append("Input vector table must be aligned to 256 bytes")
     if task_stack != 8192:
         errors.append("Task stack changed from 8192 bytes; review heap and stack budgets together")
     if heap < 40 * 1024:
@@ -102,11 +120,16 @@ def audit(symbols, by_address, task_stack):
         errors.append("Generic fmt linked into firmware; use the integer UI/error helpers")
     if any("crypto/internal/fips140" in name for name in symbols):
         errors.append("FIPS module linked into firmware; use the image SHA-256 subset")
+    if any(name.startswith("hash/crc32.") for name in symbols):
+        errors.append("Standard CRC linked into firmware; its slicing table allocates 8 KiB of heap")
+    if "(time.Time).Format" in symbols:
+        errors.append("General time formatting linked into firmware; use the fixed UI formats")
     for name, size in paths.items():
         if size + RESERVE > task_stack:
             errors.append(f"{name}: core frames {size} + reserve {RESERVE} > stack {task_stack}")
     return {
         "task_stack_bytes": task_stack,
+        "gpio_port_isr_frame_bytes": port_frame,
         "ram_reserved_bytes": symbols["_heap_start"] - 0x20000000,
         "heap_region_bytes": heap,
         "display_strip_bytes": 2880,

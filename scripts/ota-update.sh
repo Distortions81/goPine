@@ -17,4 +17,7 @@ else
     "$python_bin" -m pip install --disable-pip-version-check pexpect==4.9.0 ptyprocess==0.7.0
   fi
 fi
+if [[ " $* " == *" --direct "* ]] && ! "$python_bin" -c 'import bleak' 2>/dev/null; then
+  "$python_bin" -m pip install --disable-pip-version-check bleak==0.22.3
+fi
 exec "$python_bin" -u scripts/ota_update.py "$@"

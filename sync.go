@@ -37,8 +37,11 @@ func timeRadioNeedsService() bool {
 }
 
 type timeSyncController struct {
-	radio   timeRadio
-	running bool
+	radio       timeRadio
+	running     bool
+	weatherMode bool
+	phoneMode   phoneMode
+	directMode  bool
 }
 
 func (c *timeSyncController) close() {
@@ -46,9 +49,55 @@ func (c *timeSyncController) close() {
 		c.radio.Stop()
 		c.running = false
 	}
+	c.weatherMode = false
+	c.phoneMode = phoneOff
+	c.directMode = false
 }
 
 func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
+	if c.running {
+		if r, ok := c.radio.(interface{ UpdateBattery(uint8) }); ok {
+			r.UpdateBattery(min(battery, 100))
+		}
+	}
+	// A completed asynchronous shutdown must wake this controller so an
+	// explicitly requested replacement can start even with the screen asleep.
+	if r, ok := c.radio.(interface{ AcknowledgeUpdates() }); ok {
+		r.AcknowledgeUpdates()
+	}
+	if c.directMode {
+		return
+	}
+	weatherOpen := u.page == pageWeatherSync && u.weather != nil && u.weather.open
+	if p := u.phone; p != nil {
+		if weatherOpen || u.sync.Open || u.page == pageUpdate || u.page == pageTrial {
+			if p.mode != phoneOff {
+				p.mode, p.status = phoneOff, "Connection stopped"
+				p.clearLink()
+			}
+		}
+		if p.restart || (c.running && c.phoneMode != p.mode) {
+			c.close()
+			p.clearLink()
+			p.restart = false
+		}
+		if p.mode != phoneOff {
+			c.updatePhone(u, now, battery)
+			return
+		}
+	}
+
+	if c.running && c.weatherMode != weatherOpen {
+		c.close()
+	}
+	if weatherOpen {
+		u.sync.Cancel()
+		c.updateWeather(u, now, battery)
+		return
+	}
+	if u.weather != nil {
+		u.weather.open = false
+	}
 	if u.page != pageTimeSync {
 		u.sync.Cancel()
 		c.close()
@@ -62,6 +111,9 @@ func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
 		return
 	}
 	if !c.running {
+		if radioBusy(c.radio) {
+			return
+		}
 		value, err := timesync.Encode(u.clock.Now(now))
 		// An unset/build-seeded clock must not prevent receiving correct time.
 		if err != nil {
@@ -129,8 +181,9 @@ func (u *watchUI) drawTimeSync(d canvas, now time.Time) {
 	if u.sync.Pending {
 		centered(d, &uifont.Regular18, 69, "Use received time?", muted)
 		stamp := u.sync.Proposed.Add(now.Sub(u.sync.Received))
-		centered(d, &uifont.Bold24, 105, stamp.Format("15:04:05"), accent)
-		centered(d, &uifont.Regular18, 133, stamp.Format("02 Jan 2006"), white)
+		clock, date := syncTimeDigits(stamp), syncDateDigits(stamp)
+		centered(d, &uifont.Bold24, 105, string(clock[:]), accent)
+		centered(d, &uifont.Regular18, 133, string(date[:]), white)
 		centered(d, &uifont.Regular18, 166, "Check before accepting", muted)
 		clockControl(d, 126, 188, 102, 44, "ACCEPT", positive)
 	} else if u.sync.Open {
@@ -145,4 +198,21 @@ func (u *watchUI) drawTimeSync(d canvas, now time.Time) {
 		centered(d, &uifont.Regular18, 138, "Bluetooth window closed", muted)
 	}
 	clockControl(d, 12, 188, 102, 44, "BACK", card)
+}
+
+// Deadline access is also safe during the final interrupt-masked sleep handoff.
+func timeRadioIdleDelay() time.Duration {
+	if r, ok := activeTimeRadio.(interface{ IdleDelay() time.Duration }); ok {
+		return r.IdleDelay()
+	}
+	if timeRadioNeedsService() {
+		return activeRadioInterval
+	}
+	return idleMaxWait
+}
+func timeRadioHasUpdate() bool {
+	if r, ok := activeTimeRadio.(interface{ HasUpdate() bool }); ok {
+		return r.HasUpdate()
+	}
+	return false
 }

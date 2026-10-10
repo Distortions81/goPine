@@ -4,7 +4,7 @@ import "time"
 
 const (
 	minimumLoopWait      = time.Millisecond
-	powerPollInterval    = time.Second
+	powerPollInterval    = 5 * time.Second
 	noDeadlineDelay      = time.Duration(1<<63 - 1)
 	timeSyncPollInterval = 50 * time.Millisecond
 )
@@ -47,6 +47,20 @@ func nextLoopDelay(now time.Time, u *watchUI, nextPower time.Time, awake bool) t
 	if awake && u.page == pageTimeSync {
 		schedule.after(timeSyncPollInterval)
 	}
+	if awake && u.weather != nil && u.weather.open {
+		schedule.by(u.weather.expires)
+		schedule.after(timeSyncPollInterval)
+	}
+	if u.phone != nil && u.phone.mode == phoneSession {
+		schedule.by(u.phone.expires)
+	}
 	u.scheduleTimers(&schedule, awake)
+	if u.page == pageTransfer && u.transfer != nil && u.transfer.open {
+		schedule.by(u.transfer.expires)
+		schedule.after(50 * time.Millisecond)
+	}
+	if n := u.notifications; n != nil && now.Before(n.buzzUntil) {
+		schedule.by(n.buzzUntil)
+	}
 	return schedule.delay()
 }

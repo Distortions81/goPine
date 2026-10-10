@@ -5,19 +5,150 @@ and side-button recovery continue working. These changes have host-test and
 firmware-build coverage; battery life and sleep current still need measurement
 on a watch.
 
+## Charger wake screen (0.3.14, boot/KEEP confirmed)
+
+GPIO P0.12 (active-low charging) and P0.19 (active-low external power) now use
+the existing low-power PORT/SENSE interrupt handler on both edges. Each handler
+acknowledges its latched source and arms the opposite level. The normal wait
+loop consumes charger changes separately from button/touch changes, then waits
+for 150 ms of stable state before emitting one power event. Contact bounce and
+short pulses do not repeatedly wake the display; stable charger state leaves
+no additional timer deadline. External power absent takes precedence over a
+charging signal that is still settling on unplug.
+
+A power event wakes the LCD, refreshes the battery sample once, and opens a
+full-screen notice. Awake sampling remains at five seconds, and the notice uses
+the normal 15-second display timeout. It never keeps the display on for the
+whole charge. Sleep has no new ADC polling. Tap/swipe dismisses the notice and
+consumes that gesture; the underlying editor/page is preserved. Alarm, trial,
+firmware transfer and active time/weather update screens retain priority.
+
+Statuses are Charging, Unplugged, and Charging stopped (external power still
+present); the last becomes Charged when the voltage estimate reaches 100%.
+External power alone is not taken as proof of full charge. There is no ETA:
+voltage-derived percentage under charging load is not a calibrated time-to-full
+measurement. The user explicitly allowed omitting an unreliable ETA.
+
+Host tests cover debounce, GPIO state precedence, a 12-hour sleep without ADC
+polls, charger wake/unplug wake, alarm priority, update-prompt expiry, safe
+notice dismissal and zero-allocation strip rendering. The GPIO ISR frame is
+48 bytes in the BLE build and passes the resource gate. Physical charging edges,
+contact bounce, return to sleep, and current consumption remain hardware checks.
+
+## Local 0.3.9 phone power changes
+
+The unflashed phone candidate adds opt-in screen-off connections. Bluetooth still
+defaults to Off on reboot. A ten-minute session expires while asleep; Stay
+Connected lasts until disabled. Music/weather traffic does not wake the display.
+
+Two changes address connected overhead: NimBLE RF management now releases HFXO
+between scheduled events (using InfiniTime's 1,500 µs startup allowance), and
+hardware waits use NPL queue/callout deadlines instead of a fixed 20 ms interval.
+Queues are rechecked with interrupts masked at the WFE handoff to close the
+IRQ-before-sleep race. Initial advertising slows after 30 seconds, and link loss
+uses 1–1.5-second intervals. Repeated metadata and position updates do not redraw.
+
+Host/build checks pass, but crystal timing, connected/disconnected-idle current,
+and shutdown current **still need on-watch measurements**. The device remains on
+0.3.7 for its battery comparison. See [phone details](time.md#phone-connections-and-music-candidate-039).
+
+## Drain report and InfiniTime-style candidate (2026-10-09)
+
+The user reported approximately 30% remaining after 30 hours on 0.3.4, with
+Touch to wake Off and the watch asleep throughout. The cause is **not proven**.
+The changed voltage curve prevents a direct percentage comparison across older
+versions, but does not establish that this is merely an estimation difference.
+
+Candidate **0.3.6** replaces the previous sleep implementation with the same
+basic input/sleep model used by InfiniTime: low-power GPIO PORT interrupts and
+a tickless CPU wait. The intermediate 0.3.5+1 candidate rolled back to 20 ms
+button polling for comparison; 0.3.6 supersedes that candidate.
+
+### Input and CPU wait
+
+- Button and touch share a real GPIOTE PORT handler. All high-accuracy GPIOTE
+  IN channels are disabled. InfiniTime likewise sets `hi_accuracy=false` in
+  its [input configuration](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/systemtask/SystemTask.cpp).
+- BUTTON_OUT stays high, as in InfiniTime. A button press wakes immediately;
+  a 20 ms stable-release debounce prevents contact bounce from toggling twice.
+  Latched short pulses survive until the handler processes them. GPIO SENSE is
+  rearmed to the opposite level so a held button or touch IRQ cannot cause an
+  interrupt storm. LDETECT retains pulses; SENSE is disabled before clearing
+  LATCH because an active SENSE condition prevents clearing it.
+- TinyGo's built-in handler only services IN channels. A dedicated PORT handler
+  is installed in a 256-byte-aligned RAM vector table, preserving other vectors.
+  NimBLE later copies the current table and preserves this handler. Do not use
+  `machine.Pin.SetInterrupt` alongside this driver. The ISR only acknowledges
+  hardware and records flags; it does not allocate, call buses, or run UI code.
+- Like InfiniTime's [FreeRTOS tickless port](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/FreeRTOS/port_cmsis_systick.c),
+  the wait masks interrupts globally during the check/WFE handoff and uses
+  SEVONPEND. Pending interrupts wake the CPU and are dispatched when the mask
+  is restored. GPIOTE stays enabled in the NVIC; there is no temporary GPIOTE
+  masking or button-circuit pulsing as in 0.3.4.
+- RTC2 supplies a one-shot deadline. RTC0 remains NimBLE's and RTC1 remains
+  TinyGo's. The deadline is the earliest application, display timeout, debounce,
+  vibration, or watchdog deadline. With a normal inherited watchdog and no
+  other work, idle wakes once per second; shorter watchdog timeouts use one
+  quarter of their reload period. Without a running watchdog, a four-minute
+  cap bounds RTC wrap handling. Holding the physical button stops watchdog
+  feeding for recovery.
+- Active touch contact uses 2 ms tracking, and an active/draining BLE session
+  uses 20 ms cooperative runtime sleeps in 0.3.6/0.3.7 (replaced in local 0.3.9). Neither interval applies to an idle
+  sleeping watch with touch wake Off and radio stopped. The direct wait assumes
+  the current single Go application task; adding background goroutines requires
+  scheduler integration.
+
+InfiniTime's system task also runs housekeeping every 100 ms for motion,
+watchdog service and time persistence. goPine has no motion sampling, so that
+period is not copied. Alarms, countdowns and pending saves retain their own
+wake deadlines. System ON sleep keeps RTCs and interrupts available; this is
+not System OFF.
+
+### Peripheral findings
+
+The comparison found missing LCD/SPI pin shutdown and confirmed the LCD timing
+guard needed by the earlier candidate:
+
+- After LCD SLPIN, wait for settling, disable/reset SPIM0, and disconnect SCK,
+  MOSI, MISO and the LCD D/C digital input buffers. Fully restore SPI and D/C
+  before wake. InfiniTime does this in
+  [SpiMaster::Sleep](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/drivers/SpiMaster.cpp)
+  and [St7789::Sleep](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/drivers/St7789.cpp).
+  Chip selects stay high and LCD reset stays deasserted.
+- Guard SLPIN for 125 ms after SLPOUT, and allow at least 5 ms of settling after
+  either command (with rounding margin), following InfiniTime. TinyGo's driver
+  does not enforce the wake-to-sleep guard. This matters for rapid toggles but
+  is a weak explanation for a watch left asleep throughout the reported run.
+- Retain Nordic's SPIM POWER reset/readback sequence from candidate 0.3.5.
+  Clearing ENABLE alone misses
+  [nRF52832 anomaly 89](https://docs.nordicsemi.com/r/bundle/errata_nRF52832_Rev2/page/ERR/nRF52832/Rev2/latest/anomaly_832_89.html),
+  which documents 400–450 µA excess current with SPIM/TWIM EasyDMA and GPIOTE.
+  Only SPIM0 is reset; board I2C uses TWI1, not TWIM0.
+- Existing touch deep sleep, per-transaction I2C gating, external flash sleep,
+  and unused sensor shutdown already cover the corresponding InfiniTime paths.
+  TinyGo's internal I2C pull-ups remain configured; InfiniTime uses external
+  pull-ups. Idle lines are high, so this is not evidence of a continuous drain.
+- InfiniTime clears pending FPU exceptions before WFE. This target uses software
+  floating point and TinyGo disables the FPU at startup, so its FPSCR access
+  sequence is not applicable here.
+
+These are source/specification findings, not current measurements. In
+particular, the LCD timing gap predates 0.3.4 and SPI disable was added in 0.3.3.
+They do not prove why 0.3.4 appeared worse. Measure sleep current after ordinary
+sleep, rapid toggles, and Bluetooth sync before claiming the regression fixed.
+
 ## Touch to wake
 
-Settings has a **Touch to wake: Off/On** toggle. It defaults to Off, including
+Settings → Display has a **Touch Wake: Off/On** toggle in 0.3.15 (directly under Settings in 0.3.14). It defaults to Off, including
 when loading existing settings. Back remains available through the top-left
 arrow or a right swipe. Touch works normally while awake. With the setting On,
 the waking contact is consumed instead of activating a control.
 
 With the setting Off, screen sleep resets the CST816S and writes `0x03` to
 register `0xA5`, following [InfiniTime's touch driver](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/drivers/Cst816s.cpp).
-The touch interrupt is removed, its GPIOTE channel is disabled, and queued
-contact state is discarded. TinyGo 0.42.0's `SetInterrupt(0, nil)` only masks
-the interrupt, so channel configuration and latched events are explicitly
-cleared too. Wake resets and configures touch again. Sleep writes have bounded
+GPIO SENSE for touch is disabled, its latch and software flags are cleared, and
+queued contact state is discarded. No GPIOTE IN channel is used.
+Wake resets and configures touch again. Sleep writes have bounded
 retries; failure leaves reset asserted and interrupts off until wake retries
 initialization. A touch fault does not prevent button or timer wake.
 
@@ -32,51 +163,51 @@ downgrading to a firmware version without this setting if current state matters.
 
 | Component | Audited behavior / change |
 | --- | --- |
-| LCD/backlight | Already enters LCD sleep and switches all three backlight channels off. SPI0 is now also disabled after the sleep command and re-enabled before wake. |
+| LCD/backlight | Switches all three backlight channels off. LCD sleep respects a 125 ms wake guard. SPIM0 is disabled and power-cycled (anomaly 89); SPI and D/C pins are disconnected until wake. |
 | Touch I2C | TinyGo leaves TWI1 enabled after transfers. Now enabled only for a transaction and disabled afterward, including errors. No touch polling or reads while asleep with touch wake Off. |
-| Battery | Samples every second awake, with no periodic samples while asleep; button/touch/alert wake refreshes immediately. Pending settings writes take a fresh sample only at the write boundary. SAADC is disabled between completed conversions. |
+| Battery | Samples every five seconds awake in candidate 0.3.7, with no periodic samples while asleep; button/touch/alert wake refreshes immediately. Pending settings writes take a fresh sample only at the write boundary. SAADC is disabled between completed conversions. |
 | Application loop | Sleep skips rendering, stopwatch/countdown animation, minute redraw deadlines, update-page expiry redraws, and closed time-sync-page polls. Timer and alarm deadlines still take precedence. Pending settings retain their two-second save deadline independently of battery sampling. |
-| Side button/watchdog | While asleep and BLE is fully stopped, use low-power GPIO SENSE/PORT and interruptible WFE instead of 20 ms polling. RTC2 wakes for the earliest application deadline or watchdog service. Wake at most one second apart with a running watchdog, shortened to one quarter of its configured timeout. A held button still inhibits watchdog feeding and uses 20 ms release polling. Awake input polling is unchanged. |
-| Bluetooth | Starts only for explicit time sync. Sleep cancels the session; existing teardown disables radio/RNG and releases HFXO. Continue pumping through asynchronous disconnect, then skip the pump once the host is stopped. RTC0 remains allocated after first sync; no changes to its ownership. Verify current returns to baseline after repeated sync windows. |
+| Side button/watchdog | Low-power PORT interrupts with BUTTON_OUT high. RTC2 waits until work is due or watchdog service is needed (normally 1 s). Held presses inhibit feeding. Active contact uses 2 ms tracking; local 0.3.9 BLE uses queue/callout deadlines and IRQ wakeups. |
+| Bluetooth | Starts for explicit time/weather sync or opt-in phone mode in local 0.3.9. Sleep cancels standalone time/weather windows; phone sessions survive sleep. Off, expiry or error stop the session; existing teardown disables radio/RNG and releases HFXO. Continue pumping through asynchronous disconnect, then skip the pump once the host is stopped. RTC0 remains allocated after first use; no changes to its ownership. Verify current returns to baseline after repeated connection windows. |
 | External flash/UART/regulator | Already sends external flash deep-power-down at boot, disables UART0, and enables DC/DC. |
 | Vibration | Already off outside bounded alert pulses; sleep dismissal and error exits turn it off. |
 | Motion/heart-rate sensors | At boot, disable HRS3300 LED drive and clear its enable bit. Recognize BMA421/425 IDs (0x11/0x13), soft reset to discard inherited features/step counting, disable acceleration, enable advanced power save, and disable FIFO self-wakeup. No recurring sensor reads. Transfers are bounded by the TinyGo TWI timeout; attempt both sensors independently and allow the watch to boot if one is absent/unresponsive. |
 
-During idle sleep the application has no periodic refresh deadline. Necessary
-alarm/countdown/snooze and pending-save deadlines still apply. Hardware waits
-service the inherited watchdog and RTC range limits internally. A low-power
-settings-write rejection defers the save until another event instead of creating
-an ADC retry timer. Unused heart-rate/motion sensors receive shutdown commands
-once at boot only; they are never enabled for measurement or polled.
-
-## Button sleep implementation and tradeoff
-
-TinyGo 0.42's nRF `time.Sleep` keeps waiting for its RTC1 deadline after a GPIO
-interrupt. Merely lengthening that sleep could miss short presses. The new
-path uses RTC2 for a one-shot deadline and ARM WFE with SEVONPEND. It temporarily
-masks the NVIC GPIOTE handler (TinyGo's handler does not service PORT), leaving
-the peripheral's PORT interrupt enabled to generate a pending-interrupt event.
-Button PORT events latch even if the user releases before the CPU resumes.
-Existing touch IN events remain latched for the normal handler. Cleanup removes
-button SENSE before clearing PORT, then restores SCR/NVIC state. RTC0/NimBLE and
-RTC1/runtime are not repurposed. This assumes the current single Go UI task;
-additional background Go tasks would require scheduler integration.
-
-GPIO sense requires BUTTON_OUT to remain high while waiting. PINE64 reports
-about **34 µA** for that circuit, versus briefly pulsing it for every poll.
-The implementation trades that fixed draw for fewer CPU wakeups: typically
-one watchdog wake per second instead of 50 input wakes per second, and up to
-four minutes between wakes when no watchdog is running. This is **not yet a
-measured net current reduction**. Compare against 0.3.3 on the watch before
-claiming a battery-life improvement. Touch-wake On and BLE shutdown can cause
-additional work.
+During idle sleep the application has no periodic refresh or ADC deadline.
+Necessary alarm/countdown/snooze and pending-save deadlines still apply.
+A low-power settings-write rejection defers saving until another event instead
+of creating an ADC retry timer. Unused heart-rate/motion sensors receive
+shutdown commands once at boot; they are never enabled for measurement or polled.
 
 Sensor register sequences follow the pinned InfiniTime
 [HRS3300 driver](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/drivers/Hrs3300.cpp)
 and [BMA driver/API](https://github.com/InfiniTimeOrg/InfiniTime/tree/6c119eb52206b580b556b41633dddc1e1b66a8da/src/drivers/Bma421_C).
-Wake design references: [PineTime button circuit](https://pine64.org/documentation/PineTime/Hardware/#button),
-[Nordic GPIOTE PORT](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/gpiote.html),
-and [ARM event wake without an ISR](https://developer.arm.com/community/arm-community-blogs/b/architectures-and-processors-blog/posts/beginner-guide-on-interrupt-latency-and-interrupt-latency-of-the-arm-cortex-m-processors).
+GPIO reference: [Nordic GPIOTE PORT](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/gpiote.html).
+
+## Awake work in candidate 0.3.7
+
+The optimization pass reduces recurring work without changing brightness or
+timer/contact responsiveness:
+
+- Battery sampling changes from 1 s to 5 s: 80% fewer scheduled ADC reads.
+  A 15-second awake-loop test sees three samples (boot, 5 s, 10 s). Wake and
+  alert samples and pre-write safety checks remain immediate. Charging and
+  battery indications can lag up to five seconds while already awake.
+- Stopwatch/countdown ticks and hold feedback rasterize and checksum only
+  their changing horizontal bands. Page/control changes and display wake still
+  repaint fully; unchanged display strips still skip SPI transfer.
+- Settings comparisons no longer allocate a 288-byte temporary each loop on
+  TinyGo, reducing allocation/GC work both awake and during idle wakeups.
+- CRC lookup data moves to flash, avoiding the standard implementation's 8 KiB
+  runtime heap table and 1 KiB static RAM table. This buys memory at the cost of
+  slower full-frame checksums in host tests; watch CPU/current effects need
+  measurement. See the [measured resource and CPU tradeoffs](performance.md).
+
+These changes do not establish a battery-life gain or resolve the reported
+sleep-drain regression. Version 0.3.7 was uploaded on 2026-10-09; the user
+confirmed boot and tapped KEEP. A useful device
+comparison includes a static clock, running stopwatch, repeated page changes,
+and ordinary sleep with identical brightness, timeout and radio history.
 
 ## Battery voltage curve
 
@@ -112,11 +243,29 @@ the new estimator.
 
 ## Validation
 
+Candidate 0.3.6 passes `go test ./...`, `go vet ./...`, the resource-checker
+regression tests, the standalone PineTime build, and
+`scripts/build-ota.sh --ble 0.3.6` with TinyGo 0.42.0. The linked OTA image is
+215,252 bytes with a 44,712-byte heap region and a 40-byte PORT ISR frame.
+The resource checker enforces vector-table alignment and the ISR frame budget.
+Disassembly inspection verifies the RAM vector installation references the
+PORT handler with its Thumb bit set, and that the handler does not allocate.
+These checks cover both standalone and MCUboot builds; they do not execute the
+physical interrupt controller. On 2026-10-09, the complete 0.3.6 OTA image was
+uploaded through recovery and passed receiver validation. An activation/reset
+command was sent, but its acknowledgement was unavailable. User confirmation
+of boot and KEEP is pending; do not retry the transfer solely for the missing ACK.
+Package SHA-256: `f8a10b28252ae6770fc9f9a8f82814c0ac9586f28e9e146c5150b9ddda605a47`.
+Transfer log: `build/ota/upload-0.3.6-20261009-163346-145348.log`.
+
 Host tests cover default/toggle/repaint, both persisted choices, old-record
 compatibility, malformed flag rejection, touch sleep command/retries, SDL
 button and touch wake, consumed wake taps, zero periodic battery samples through 12 hours of sleep,
-timely power-checked saves without low-power retry loops, sensor failures/unknown IDs, watchdog service intervals, and
-existing sleeping alarm/countdown/snooze behavior. These do not simulate
+timely power-checked saves without low-power retry loops, sensor failures/unknown IDs, LCD wake/sleep timing, and
+existing sleeping alarm/countdown/snooze behavior. New input tests model short
+button/touch pulses, held inputs, rearm races, contact bounce and RTC wrap;
+scheduling tests cover alarm/refresh, screen timeout, debounce, vibration and
+radio deadlines with no periodic idle button poll. These do not simulate
 the physical buses, GPIO interrupt hardware, or current consumption.
 
 On a watch, compare sleep current with touch wake Off and On; test repeated
@@ -126,7 +275,20 @@ sync. Measure with the debugger disconnected. Confirm charging indications
 refresh on wake and touch reinitializes reliably after many sleep cycles before
 claiming a battery-life improvement.
 
-The 0.3.4 candidate containing these changes was installed by OTA on 2026-10-07;
+The 0.3.4 candidate was installed by OTA on 2026-10-07;
 the user confirmed boot and tapped KEEP. Sleep current has not been measured.
-In particular, GPIO sense, short-press latching, and repeated
-RTC2 sleep/wake need device validation with and without prior Bluetooth sync.
+The replacement sleep implementation, now installed in 0.3.7, still needs sleep-current/runtime comparison
+with and without prior Bluetooth sync; the reported regression is not yet
+confirmed resolved.
+
+
+## Screen orientation (candidate 0.3.15)
+
+Settings → Display → Flip Screen rotates the LCD 180 degrees using ST7789 MADCTL
+and maps touch coordinates and swipe directions to match. It defaults to Off,
+is saved in journal byte 145, and survives sleep and reboot. Rotation is sent
+only when the setting changes (including boot restoration), with a complete
+repaint; there is no per-pixel rotation or extra sleep polling on the watch.
+A setting change discards the current contact and queued touch events.
+Older firmware rejects snapshots with this reserved byte set. Turn Flip Screen
+Off and wait for saving before downgrading if the latest settings must carry back.

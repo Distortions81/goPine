@@ -14,6 +14,18 @@ type powerStatus struct {
 	State      chargeState
 }
 
+// Both charger signals are active-low. Loss of external power wins over a
+// charging indication that has not settled yet during unplugging.
+func chargerState(powerPresent, charging bool) chargeState {
+	if !powerPresent {
+		return chargeDischarging
+	}
+	if charging {
+		return chargeCharging
+	}
+	return chargeExternalPower
+}
+
 type batteryPoint struct {
 	millivolts uint16
 	percent    uint8

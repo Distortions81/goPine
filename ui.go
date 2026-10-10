@@ -32,6 +32,18 @@ const (
 	pageCountdown
 	pageCountdownEdit
 	pageAlert
+	pageWeather
+	pageWeatherForecast
+	pageWeatherSync
+	pageMusic
+	pagePhone
+	pageInbox
+	pageNotification
+	pageTransfer
+	pageDisplaySettings
+	pagePairing
+	pagePairingSettings
+	pageCharging // Frame identity for the full-screen power notice overlay.
 )
 
 type uiAction uint8
@@ -41,27 +53,35 @@ const (
 	actionStartUpdate
 	actionKeep
 	actionRevert
+	actionInstallUpdate
 )
 
 const updateHoldDuration = 3 * time.Second
 
 type watchUI struct {
-	page         page
-	expires      time.Time
-	message      string
-	use24        bool
-	touchWake    bool
-	holding      bool
-	holdSince    time.Time
-	holdStep     int
-	clock        watchClock
-	edit         clockEdit
-	sync         timesync.Session
-	syncStatus   string
-	timers       timerState
-	alarmIndex   int
-	editRepeat   alarmRepeat
-	settingsNote string
+	page          page
+	expires       time.Time
+	message       string
+	use24         bool
+	touchWake     bool
+	flipScreen    bool
+	holding       bool
+	holdSince     time.Time
+	holdStep      int
+	clock         watchClock
+	edit          clockEdit
+	sync          timesync.Session
+	syncStatus    string
+	timers        timerState
+	alarmIndex    int
+	editRepeat    alarmRepeat
+	settingsNote  string
+	weather       *weatherState
+	phone         *phoneState
+	notifications *notificationState
+	transfer      *transferState
+	powerNotice   bool
+	pairing       *pairingState
 }
 
 func newWatchUI(state updateState) watchUI {
@@ -89,7 +109,30 @@ func (u *watchUI) showMessage(message string) {
 
 func (u *watchUI) back(state updateState) {
 	u.cancelHold()
-	if u.page == pageAlarmEdit || u.page == pageAlarmRepeat {
+	if u.page == pagePhone {
+		u.page = pageMusic
+		if u.phone != nil {
+			if u.phone.fromInbox {
+				u.page = pageInbox
+			}
+			u.phone.announced = false
+		}
+	} else if u.page == pageNotification {
+		u.page = pageInbox
+	} else if u.page == pageInbox {
+		u.page = pageApps
+	} else if u.page == pageMusic {
+		u.page = pageApps
+	} else if weatherPage(u.page) {
+		if u.weather != nil {
+			u.weather.open = false
+		}
+		if u.page == pageWeather {
+			u.page = pageApps
+		} else {
+			u.page = pageWeather
+		}
+	} else if u.page == pageAlarmEdit || u.page == pageAlarmRepeat {
 		u.page = pageAlarms
 	} else if u.page == pageCountdownEdit {
 		u.page = pageCountdown
@@ -110,6 +153,39 @@ func (u *watchUI) back(state updateState) {
 //
 //go:noinline
 func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power powerStatus) uiAction {
+	if u.handlePairing(e) {
+		return actionNone
+	}
+	if u.page == pageDisplaySettings {
+		u.handleDisplaySettings(e)
+		return actionNone
+	}
+	if u.page == pagePairingSettings {
+		u.handlePairingSettings(e)
+		return actionNone
+	}
+	if u.handlePowerNotice(e) {
+		return actionNone
+	}
+	if u.page == pageTransfer {
+		return u.handleTransfer(e, now)
+	}
+	if u.page == pageInbox || u.page == pageNotification {
+		u.handleNotifications(e, state)
+		return actionNone
+	}
+	if u.page == pageClock && state != firmwareTrial && e.Kind == inputTap && inRect(e, 12, 190, 228, 232) && u.unreadNotifications() > 0 {
+		u.openInbox()
+		return actionNone
+	}
+	if u.page == pageMusic || u.page == pagePhone {
+		u.handlePhone(e, now, state)
+		return actionNone
+	}
+	if weatherPage(u.page) {
+		u.handleWeather(e, now, state)
+		return actionNone
+	}
 	if u.page == pageAlert {
 		snooze := e.Kind == inputTap && inRect(e, 16, 144, 224, 188) && u.timers.source < alarmCount
 		if snooze || e.Kind == inputSleep || e.Kind == inputSwipeRight ||
@@ -206,7 +282,7 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 				}
 			}
 		} else if inRect(e, 16, 174, 224, 218) {
-			u.touchWake = !u.touchWake
+			u.page = pageDisplaySettings
 		}
 	case pageMessage:
 		if inRect(e, 40, 174, 200, 218) {
@@ -246,7 +322,7 @@ func centered(d canvas, font tinyfont.Fonter, y int16, text string, c color.RGBA
 		return
 	}
 	width, _ := d.Size()
-	w, _ := tinyfont.LineWidth(font, text)
+	w, _ := lineWidth(font, text)
 	writeLine(d, font, width/2-int16(w)/2, y, text, c)
 }
 
@@ -259,7 +335,7 @@ func drawButton(d canvas, x, width int16, label string, confirm bool) {
 		c = positive
 	}
 	gfx.RoundBox(d, x, 174, width, 44, 6, c)
-	w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
+	w, _ := lineWidth(&uifont.Bold18, label)
 	writeLine(d, &uifont.Bold18, x+width/2-int16(w)/2, 202, label, white)
 }
 
@@ -280,21 +356,21 @@ func drawWordLine(d canvas, text string, y int16, width uint32) {
 	}
 	screen, _ := d.Size()
 	x := screen/2 - int16(width)/2
-	space, _ := tinyfont.LineWidth(&uifont.Regular18, " ")
+	space, _ := lineWidth(&uifont.Regular18, " ")
 	for text != "" {
 		word, rest := nextWord(text)
 		if word == "" {
 			break
 		}
 		writeLine(d, &uifont.Regular18, x, y, word, muted)
-		w, _ := tinyfont.LineWidth(&uifont.Regular18, word)
+		w, _ := lineWidth(&uifont.Regular18, word)
 		x += int16(w + space)
 		text = rest
 	}
 }
 
 func drawLines(d canvas, text string) {
-	space, _ := tinyfont.LineWidth(&uifont.Regular18, " ")
+	space, _ := lineWidth(&uifont.Regular18, " ")
 	start, rest := text, text
 	width, y := uint32(0), int16(92)
 	for rest != "" {
@@ -302,7 +378,7 @@ func drawLines(d canvas, text string) {
 		if word == "" {
 			break
 		}
-		w, _ := tinyfont.LineWidth(&uifont.Regular18, word)
+		w, _ := lineWidth(&uifont.Regular18, word)
 		if width != 0 && width+space+w > 208 {
 			drawWordLine(d, start[:len(start)-len(rest)], y, width)
 			start, width, y = rest, 0, y+21
@@ -319,13 +395,18 @@ func drawLines(d canvas, text string) {
 }
 
 func (u *watchUI) timeLabel(now time.Time) string {
-	if u.use24 {
-		return now.Format("15:04")
-	}
-	return formatTime(now)
+	text, start := timeDigits(now, u.use24)
+	return string(text[start:])
 }
 
+const updateCounterBaseline = 122
+const updateProgressY = 134
+
 func (u *watchUI) draw(d canvas, now time.Time) {
+	if u.page == pageTransfer {
+		u.drawTransfer(d)
+		return
+	}
 	if u.page == pageTimeSync {
 		u.drawTimeSync(d, now)
 		return
@@ -342,6 +423,9 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		if !u.clock.initialized || u.clock.approximate {
 			centered(d, &uifont.Regular18, 181, "Set or sync time", warning)
 		}
+		if count := u.unreadNotifications(); count > 0 {
+			centered(d, &uifont.Regular18, 216, "Messages: "+decimal(count), accent)
+		}
 		return
 	}
 	if u.page != pageTrial && u.page != pageAlert {
@@ -352,7 +436,27 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		u.drawClockSettings(d, now)
 		return
 	}
+	if u.page == pageMusic || u.page == pagePhone {
+		u.drawPhone(d, now)
+		return
+	}
+	if u.page == pageInbox || u.page == pageNotification {
+		u.drawNotifications(d)
+		return
+	}
+	if u.page == pageDisplaySettings {
+		u.drawDisplaySettings(d)
+		return
+	}
+	if u.page == pagePairingSettings {
+		u.drawPairingSettings(d, now)
+		return
+	}
 	if u.page >= pageApps {
+		if weatherPage(u.page) {
+			u.drawWeather(d, now)
+			return
+		}
 		u.drawTimers(d, now)
 		return
 	}
@@ -362,23 +466,19 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 		centered(d, &uifont.Bold18, 86, "TIME & DATE", white)
 		gfx.RoundBox(d, 16, 120, 208, 48, 6, card)
 		centered(d, &uifont.Bold18, 150, "FIRMWARE UPDATE", accent)
-		label := "Touch to wake: Off"
-		if u.touchWake {
-			label = "Touch to wake: On"
-		}
-		drawButton(d, 16, 208, label, u.touchWake)
+		drawButton(d, 16, 208, "DISPLAY", false)
 		return
 	}
 	centered(d, &uifont.Regular18, 29, "goPine "+firmwareVersion, muted)
 	switch u.page {
 	case pageUpdate:
 		centered(d, &uifont.Bold24, 64, "Install update", white)
-		centered(d, &uifont.Regular18, 88, "Hold to restart", muted)
+		centered(d, &uifont.Regular18, 88, "Hold to connect", muted)
 		remaining := 30 - u.holdStep
 		countdown := decimal(remaining/10) + "." + decimal(remaining%10) + "s"
-		centered(d, &uifont.Bold24, 122, countdown, accent)
-		gfx.FillBox(d, 30, 134, 180, 3, card)
-		gfx.FillBox(d, 30, 134, int16(u.holdStep)*180/30, 3, accent)
+		centered(d, &uifont.Bold24, updateCounterBaseline, countdown, accent)
+		gfx.FillBox(d, 30, updateProgressY, 180, 3, card)
+		gfx.FillBox(d, 30, updateProgressY, int16(u.holdStep)*180/30, 3, accent)
 		centered(d, &uifont.Regular18, 159, "Swipe back to cancel", muted)
 		drawButton(d, 24, 192, "PRESS AND HOLD", true)
 	case pageTrial:

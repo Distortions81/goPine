@@ -44,7 +44,7 @@ func buildClockTime(date, clock string) (time.Time, error) {
 	}
 	day := time.Unix(0, 0).UTC()
 	if date != "" {
-		day, err = time.Parse("2006-01-02", date)
+		day, err = parseBuildDate(date)
 		if err != nil {
 			return time.Time{}, wrapError("invalid firmware date", err)
 		}
@@ -78,4 +78,22 @@ func parseTwoDigits(value string) (int, bool) {
 		return 0, false
 	}
 	return int(value[0]-'0')*10 + int(value[1]-'0'), true
+}
+
+// The build seed has one fixed format. Avoid linking time.Parse and its
+// timezone/layout/error-formatting machinery into the watch.
+func parseBuildDate(value string) (time.Time, error) {
+	if len(value) == 10 && value[4] == '-' && value[7] == '-' {
+		century, a := parseTwoDigits(value[:2])
+		yy, b := parseTwoDigits(value[2:4])
+		month, c := parseTwoDigits(value[5:7])
+		day, d := parseTwoDigits(value[8:])
+		if a && b && c && d && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+			stamp := time.Date(century*100+yy, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+			if stamp.Day() == day {
+				return stamp, nil
+			}
+		}
+	}
+	return time.Time{}, errors.New("date must be a valid YYYY-MM-DD")
 }

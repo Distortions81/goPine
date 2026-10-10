@@ -6,7 +6,6 @@ import (
 
 	"github.com/Distortions81/goPine/internal/gfx"
 	"github.com/Distortions81/goPine/internal/uifont"
-	"tinygo.org/x/tinyfont"
 )
 
 // Hours stay in 24-hour form internally; the editor presents the selected
@@ -100,7 +99,7 @@ func clockControl(d canvas, x, y, w, h int16, label string, c color.RGBA) {
 		return
 	}
 	gfx.RoundBox(d, x, y, w, h, 6, c)
-	tw, _ := tinyfont.LineWidth(&uifont.Bold18, label)
+	tw, _ := lineWidth(&uifont.Bold18, label)
 	writeLine(d, &uifont.Bold18, x+(w-int16(tw))/2, y+h/2+7, label, white)
 }
 
@@ -145,7 +144,7 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			clockControl(d, x, 48, 88, 44, "+", card)
 			clockControl(d, x, 136, 88, 44, "-", card)
 			label := twoDigits(v)
-			w, _ := tinyfont.LineWidth(&uifont.Bold24, label)
+			w, _ := lineWidth(&uifont.Bold24, label)
 			writeLine(d, &uifont.Bold24, x+(88-int16(w))/2, 114, label, white)
 			caption := "MINUTE"
 			if i == 0 {
@@ -157,7 +156,7 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 					caption = "PM"
 				}
 			}
-			w, _ = tinyfont.LineWidth(&uifont.Regular18, caption)
+			w, _ = lineWidth(&uifont.Regular18, caption)
 			writeLine(d, &uifont.Regular18, x+(88-int16(w))/2, 132, caption, muted)
 		}
 		centered(d, &uifont.Regular18, 114, ":", muted)
@@ -167,10 +166,10 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			clockControl(d, x, 48, 64, 44, "+", card)
 			clockControl(d, x, 136, 64, 44, "-", card)
 			label := twoDigits(v)
-			w, _ := tinyfont.LineWidth(&uifont.Bold18, label)
+			w, _ := lineWidth(&uifont.Bold18, label)
 			writeLine(d, &uifont.Bold18, x+(64-int16(w))/2, 114, label, white)
 			labels := [...]string{"YEAR", "MON", "DAY"}
-			w, _ = tinyfont.LineWidth(&uifont.Regular18, labels[i])
+			w, _ = lineWidth(&uifont.Regular18, labels[i])
 			writeLine(d, &uifont.Regular18, x+(64-int16(w))/2, 132, labels[i], muted)
 		}
 	}

@@ -197,3 +197,5 @@ func TestPackedRectanglesMatchPixelReference(t *testing.T) {
 		}
 	}
 }
+
+func (d *memoryDisplay) SetFlipped(bool) error { return nil }

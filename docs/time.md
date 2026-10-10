@@ -1,5 +1,11 @@
 # Time setting and PC/phone synchronization
 
+Current confirmed boot/KEEP baseline: **0.3.14**. A local **0.3.15** image
+completed direct transfer and watch verification; boot/KEEP remains unconfirmed.
+Version **0.3.15** adds secure pairing, persistent bond storage and a connected
+shutdown fix. See [InfiniLink pairing and hardware acceptance](pairing.md).
+Versioned sections below describe their original increments.
+
 ## Available in version 0.2.4
 
 Swipe left from the clock, open Time & Date, then choose Set Time or Set Date.
@@ -223,6 +229,201 @@ on non-Linux hosts. The tool only writes to the explicitly selected device after
 checking its CTS service. It does not toggle adapters or update firmware.
 Check the watch and tap ACCEPT. Only one PC/phone should connect at a time.
 
+## Phone weather candidate (0.3.8)
+
+The local candidate adds **Clock Tools → Weather**, current temperature,
+conditions and high/low values, plus a five-day forecast. Tap the C/F unit at
+the top right to change units. Weather and unit selection stay in RAM until
+reboot; receiving weather never writes the settings journal.
+
+Tap **UPDATE** before connecting the companion. This opens a 60-second window
+advertised as InfiniTime, with CTS, Battery Service and the
+[Simple Weather Service](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/doc/SimpleWeatherService.md).
+It accepts current v0/v1 and forecast v0 values. Long ATT writes are assembled
+by NimBLE; the bridge copies the complete mbuf chain into two bounded latest-
+record mailboxes. Malformed records leave the previous good cache intact.
+The watch closes the window after receiving both valid records, or on Done,
+Back, sleep, alarm interruption, expiry or radio failure. A partial successful
+update remains cached. The last write gets the existing 200 ms ACK grace before
+radio shutdown. Cached browsing never starts the radio.
+
+The screen remains awake only during this explicit update window. This is a
+foreground integration, not background weather synchronization. Only one peer
+can connect. Existing time sync remains separate: CTS writes often sent by a
+companion before weather are acknowledged during Weather Update, but are not
+applied to the clock. Use Sync Time and ACCEPT to set time.
+
+For **InfiniLink**, keep Developer → Force ANCS off. Its development source
+discovers the weather characteristic, fetches WeatherKit data, and writes
+current/forecast values with response. Weather fetches are rate-limited and
+require phone location/network access; the foreground Weather screen is useful
+for diagnosing fetch failures. App Store/TestFlight behavior must be checked
+on the installed version. For **Gadgetbridge**, configure a weather provider
+and send its weather update while the window is open. Companion compatibility
+is not confirmed until a real exchange succeeds on each platform.
+
+InfiniLink's source sends UTC seconds even though the protocol describes local
+seconds. The watch consequently displays **receipt age**, not observation age.
+It marks data out of date after 24 hours since receipt. Forecast rows represent
+the following five days; labels use the watch's confirmed local date at receipt.
+An unset/approximate clock displays Day 1–5 instead. Set the watch date correctly
+for named weekday/date labels. Sunrise/sunset fields are accepted but not shown.
+Unsupported location characters become question marks with the current fonts.
+
+Source audit: InfiniLink commit `60abe2d2c67aff67726855374385a499d9353a94`,
+[weather writer](https://github.com/InfiniTimeOrg/InfiniLink/blob/60abe2d2c67aff67726855374385a499d9353a94/InfiniLink/BLE/BLEWriteManager.swift)
+and [weather controller](https://github.com/InfiniTimeOrg/InfiniLink/blob/60abe2d2c67aff67726855374385a499d9353a94/InfiniLink/Utils/WeatherController.swift).
+The application code was inspected for interoperability; it is not copied into
+the firmware. No new companion protocol or cloud service is required.
+
+Host coverage includes packet lengths/versions, signed temperatures, bounded
+forecasts, malformed-data recovery, cancellation/expiry, alarm interruption,
+unit changes, date rollover and strip pixel equivalence. The C mailbox passes
+ASan/UBSan; Go parser fuzzing checked over three million inputs. Phone exchange,
+long-write behavior over the physical radio and current after disconnect still
+need device tests. Version 0.3.7 remains installed for the battery comparison.
+
+Both standalone and BLE OTA builds pass. The controlled BLE build uses 213,408
+linked flash bytes, 6,604 more than 0.3.7. Static RAM reservation remains 19,316
+bytes and the heap region remains 46,220 bytes; these are linker budgets, not
+measured runtime headroom. The selected weather-update stack path is 3,840 bytes,
+within the existing 8,192-byte task stack and 2,048-byte deeper-call reserve.
+Opening Weather creates one bounded cache; cached rendering adds no compiler-
+reported heap allocations. The radio's runtime allocation peak needs measurement.
+
+The local `build/ota/gopine-dfu-0.3.8.zip` contains a 213,484-byte MCUboot image.
+ZIP SHA-256: `c9e0bee2f9672b67c29a1fb366efaa71440cc15c6dab1711ebd957272bc96d48`.
+It has not been uploaded to the watch.
+
+## Phone connections and music candidate (0.3.9)
+
+The current candidate renames Clock Tools to **Apps** and adds **Music** beside
+Weather. Open Music and tap **LINK** (or its connection status) to select:
+
+- **Off:** default after every boot; stops the connection and clears media state.
+- **Connect 10 Min:** an explicit session which survives screen sleep and alarms,
+  then expires even while asleep. Selecting it again starts a fresh ten minutes.
+- **Stay Connected:** stays enabled until Off, reboot, a radio error, or opening
+  explicit Sync Time, Weather Update, or Firmware Update. Those operations take
+  over the radio and do not automatically restore the phone connection afterward.
+
+Leaving the Music screen does not stop an opted-in session. Opening the screen
+alone never starts Bluetooth. Policy and media state are RAM-only. There is one
+unauthenticated peer; this increment does not implement pairing or notifications.
+
+The independently implemented GATT service uses InfiniTime's music service UUID
+`00000000-78fc-48fe-8e23-433b3a1942d0`, event notifications at suffix `00000001`,
+and status/artist/track/album/position/length/track-count/speed/repeat/shuffle
+characteristics at suffixes 2–12. Strings are capped at 40 bytes (long values end
+in `...`); numeric writes have exact lengths, with four-byte values retained in
+big-endian wire order. Complete mbuf chains are read. Non-ASCII display bytes
+become `?`. Position and repeated unchanged metadata do not request redraws.
+
+Controls emit InfiniTime play (0), pause (1), next (3), previous (4), volume up
+(5), volume down (6), and metadata refresh (0xe0) events. They require an active
+subscription. Play/pause waits for actual playback status and does not change
+optimistically after a command. Track/artist text clears on disconnect; each
+connection has a generation number so a queued gesture cannot cross to another
+peer. The command is attempted once, with errors shown on screen, and never
+replayed after reconnection. Connection handle zero is accepted. NimBLE owns the
+notification mbuf on both success and failure.
+
+A refresh hint is sent once when the companion subscribes, and again when the
+user returns from LINK to Music. Tap the track/artist area to request another
+refresh if the companion had not completed discovery. InfiniLink needs its music
+control permission, volume control setting, and Developer → Force ANCS off.
+Its Apple Music integration does not imply system-wide media support. Android
+Gadgetbridge and the installed iPhone app both still need actual transfer tests.
+The Battery Service initially reports the battery sample captured when the
+session starts. Candidate 0.3.12 updates it from the existing awake/wake samples
+and notifies subscribers only when the percentage changes. It adds no asleep
+ADC polling, and sleeping phones see the last sampled watch battery value.
+
+Weather received during a phone connection updates the existing bounded cache;
+that does not terminate the connection. CTS writes are transport-acknowledged
+without changing the clock, as in the standalone weather session.
+
+Bluetooth now follows queued events, host callout deadlines, bounded session
+expiry and final-ACK grace instead of fixed 20 ms service sleeps. The idle path
+checks queues again with interrupts masked immediately before WFE, so an ISR
+which already queued work cannot be missed. Controller radio/RTC interrupts wake
+the CPU earlier as needed. NimBLE's RF manager now owns HFXO between events using
+the same 1,500 µs startup allowance as pinned InfiniTime. Advertising begins at
+100–150 ms intervals, slows after 30 seconds to 1–1.5 seconds, and uses the slow
+interval immediately after a disconnected phone. Off still drains shutdown and
+releases PHY/RNG/HFXO; no reconnect is attempted once disabled.
+
+Sources inspected locally: pinned InfiniTime
+[MusicService](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/components/ble/MusicService.cpp)
+and [radio configuration](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/CMakeLists.txt),
+and pinned InfiniLink
+[MusicController](https://github.com/InfiniTimeOrg/InfiniLink/blob/60abe2d2c67aff67726855374385a499d9353a94/InfiniLink/Utils/MusicController.swift).
+No companion application code was copied.
+
+Host coverage includes sleeping session expiry in the production loop, renewed
+session deadlines, opt-in policy, mode transitions during asynchronous shutdown,
+peer changes, command failure, weather reception, wire bounds, unchanged metadata,
+malformed numeric writes, queue/callout deadlines, and strip pixel equivalence.
+The C tests run under ASan/UBSan. These checks do not establish RF timing,
+interoperability, or connected-idle current on the physical watch. Android-style
+notifications are added in 0.3.11 below; bond storage, Apple ANCS and Apple Media
+Service remain future work. Keep the
+installed 0.3.7 battery comparison separate from this unflashed candidate.
+Build sizes, resource budgets and the final package checksum are recorded in
+[performance measurements](performance.md#phone-candidate-039-2026-10-09-not-installed).
+
+## Notification inbox (candidate 0.3.11)
+
+The local candidate adds **Apps → Inbox**. **LINK** opens the existing phone
+connection choices; simply opening the inbox leaves Bluetooth off. In opted-in
+phone mode, a companion can send InfiniTime ANS notifications even without a
+music subscription. There is no additional polling timer or background radio
+session. The watch still starts with Bluetooth off after a reboot.
+
+- Retains the **four newest messages** in RAM, newest first. Tap a row to read
+  and clear its unread marker; the clock shows a tappable unread count.
+- Source/sender/title text and body are wrapped and paged with **MORE / TOP**
+  or a left swipe. Unsupported Unicode becomes one `?` per decoded character;
+  control characters become spaces. This firmware's font remains ASCII.
+- **DISMISS** and **CLEAR** affect this watch only. ANS has no stable remote
+  notification IDs, so edits, removals and phone dismissal are not synchronized.
+  A viewed message that is evicted shows a replacement notice instead of a
+  different message under the same controls. Calls have no answer/reject action.
+- A new message gives a **150 ms** vibration, at most once every **five seconds**.
+  The cutoff is scheduled even with the screen asleep. Messages leave the screen
+  asleep and do not change the active page. Alarm/countdown vibration takes
+  priority; suppressed message vibrations are not replayed later.
+- **QUIET** suppresses message vibration while retaining messages and unread
+  markers. Quiet mode and inbox contents are RAM-only and reset on reboot;
+  disconnecting retains messages already received by the UI. No notification
+  text enters the settings journal. The existing link is still unauthenticated
+  and unencrypted; pairing/bonding and ANCS are not implemented.
+
+The receiver uses service **0x1811**, New Alert **0x2a46**, and InfiniTime's
+three-byte companion header followed by plain text or `title NUL body`.
+Transport copies at most 103 bytes; larger writes end in `...`. Stored titles
+have a 40-byte limit and bodies a 100-byte limit, subject to the combined wire
+limit. A two-packet mailbox keeps the newest packets during bursts; each loop
+update drains at most two. Connection changes discard undelivered mailbox text.
+This is a best-effort inbox, not a reliable message archive.
+
+The implementation was checked against pinned
+[InfiniTime AlertNotificationService](https://github.com/InfiniTimeOrg/InfiniTime/blob/6c119eb52206b580b556b41633dddc1e1b66a8da/src/components/ble/AlertNotificationService.cpp),
+[Gadgetbridge's PineTime sender](https://github.com/Freeyourgadget/Gadgetbridge/blob/master/app/src/main/java/nodomain/freeyourgadget/gadgetbridge/service/devices/pinetime/PineTimeJFSupport.java)
+and its [ANS encoder](https://github.com/Freeyourgadget/Gadgetbridge/blob/master/app/src/main/java/nodomain/freeyourgadget/gadgetbridge/service/btle/profiles/alertnotification/AlertNotificationProfile.java)
+(GitHub mirror inspected 2026-10-09), plus pinned
+[InfiniLink's app-message sender](https://github.com/InfiniTimeOrg/InfiniLink/blob/60abe2d2c67aff67726855374385a499d9353a94/InfiniLink/BLE/BLEWriteManager.swift).
+No companion implementation code was copied. InfiniLink-generated app messages
+can use this service; **general iPhone notifications still require ANCS**.
+
+Host tests cover parsing, malformed/long/Unicode packets, bounded replacement,
+read/dismiss/clear, stable selection, text paging, frame pixels and zero redraw
+allocations. The production event-loop tests cover screen-off vibration cutoff,
+quiet mode, burst limits and simultaneous countdown alerts. The C mailbox runs
+under ASan/UBSan. Both standalone and BLE builds are checked with unchanged
+resource gates. **No real phone exchange, GATT rediscovery, ATT long-write,
+receiver boot or current measurement has been performed for 0.3.11.**
+
 ## Firmware integration constraint
 
 TinyGo's Nordic Bluetooth backend currently relies on SoftDevice. Our MCUboot
@@ -243,3 +444,12 @@ References:
 - [InfiniTime time service](https://github.com/InfiniTimeOrg/InfiniTime/blob/main/src/components/ble/CurrentTimeService.cpp)
 - [TinyGo Bluetooth Nordic requirements](https://github.com/tinygo-org/bluetooth#nordic-semiconductor)
 - [Web Bluetooth capabilities and requirements](https://developer.chrome.com/docs/capabilities/bluetooth)
+
+## Firmware update interaction (candidate 0.3.13)
+
+Opening the direct-update screen stops time/weather sessions and sets phone mode
+to Off. The update radio accepts only its firmware transfer, keeping the display
+on until Cancel, an alarm, or the ten-minute inactivity expiry. Phone mode must
+be enabled again afterward. Install uses the existing planned-reset clock
+handoff; time spent rebooting or swapping is still approximate. No new sleep
+polling or background battery sample is added. Hardware verification is pending.

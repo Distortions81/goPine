@@ -37,21 +37,22 @@ def main():
     cmake=(vendor/'src/CMakeLists.txt').read_text()
     section=cmake.split('set(NIMBLE_SRC',1)[1].split(')',1)[0]
     sources=list(dict.fromkeys(vendor/'src'/s for s in re.findall(r'libs/[^\s]+\.c',section) if '/npl/freertos/' not in s))
-    sources=[s for s in sources if s.name != 'ble_hs_stop.c']
-    sources += [nimble/'porting/nimble/src/nimble_port.c',port/'npl.c',port/'service.c',port/'alloc.c',port/'stop.c']
+    sources=[s for s in sources if s.name not in ('ble_hs_stop.c', 'ble_store_ram.c')]
+    sources += [nimble/'porting/nimble/src/nimble_port.c',port/'npl.c',port/'service.c',port/'alloc.c',port/'stop.c',port/'bond.c',port/'bond_flash.c']
+    sources += [nimble/'ext/tinycrypt/src'/name for name in ('aes_encrypt.c', 'utils.c', 'cmac_mode.c', 'ecc.c', 'ecc_dh.c')]
     include=[port/'include',libc_config,nimble/'porting/nimble/include',nimble/'nimble/include',
              nimble/'nimble/host/include',nimble/'nimble/controller/include',
              nimble/'nimble/host/src',
              nimble/'nimble/host/services/gap/include',nimble/'nimble/host/services/gatt/include',
              nimble/'nimble/host/util/include',nimble/'nimble/transport/ram/include',
-             nimble/'nimble/host/store/ram/include',
+             nimble/'nimble/host/store/ram/include',nimble/'nimble/host/store/ram/src',
              nimble/'nimble/drivers/nrf52/include',nimble/'ext/tinycrypt/include',
              args.tinygo_root/'lib/nrfx/mdk',
              args.tinygo_root/'lib/CMSIS/CMSIS/Include',
              args.tinygo_root/'lib/picolibc/newlib/libc/tinystdio',
              args.tinygo_root/'lib/picolibc/newlib/libc/include']
     flags=['--target=arm-none-eabi','-mcpu=cortex-m4','-mthumb','-mfloat-abi=soft','-Oz',
-           '-ffunction-sections','-fdata-sections','-fno-short-enums','-include',str(port/'config.h')]
+           '-fstack-usage','-ffunction-sections','-fdata-sections','-fno-short-enums','-include',str(port/'config.h')]
     flags += [flag for path in include for flag in ['-I',str(path)]]
     # Never reuse archive members from an older source list or publish a
     # partially built archive. This folder contains only generated objects.
@@ -64,6 +65,7 @@ def main():
         archive=pathlib.Path(temp)/'libgopineble.a'
         subprocess.run(['llvm-ar','rcs',str(archive),*objects],check=True)
         archive.replace(out/'libgopineble.a')
+        (out/'stack-usage.txt').write_text(''.join(p.read_text() for p in sorted(pathlib.Path(temp).glob('*.su'))))
     print(f'Built {len(sources)} objects into {out}/libgopineble.a')
 
 if __name__=='__main__':main()

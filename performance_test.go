@@ -66,10 +66,12 @@ func BenchmarkRender(b *testing.B) {
 
 func TestHotUIPathsDoNotAllocate(t *testing.T) {
 	now := time.Unix(0, 0)
-	for _, p := range []page{pageClock, pageStopwatch, pageCountdown, pageUpdate, pageSettings} {
+	for _, p := range []page{pageClock, pageStopwatch, pageCountdown, pageUpdate, pageSettings, pageMusic, pagePhone, pageWeather, pageWeatherForecast} {
 		u := newWatchUI(firmwareConfirmed)
 		u.page, u.holding, u.holdStep = p, true, 12
 		u.timers.watch.lap = 1250 * time.Millisecond
+		u.phone = samplePhone(now)
+		u.weather = sampleWeather(time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC))
 		power := powerStatus{Percent: 100}
 		d := &benchmarkDisplay{}
 		var r frameRenderer

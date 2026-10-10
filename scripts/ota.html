@@ -23,8 +23,29 @@
 const token='__TOKEN__';
 const $=id=>document.getElementById(id);
 let busy=false;
-const text={ready:['Ready to upload','On the watch, open Firmware update and hold PRESS AND HOLD. Once InfiniTime recovery appears, click the button below immediately.'],uploading:['Uploading','Keep the watch nearby. No further action is needed until it reboots.'],awaiting_keep:['Validated — check the watch','The watch validated the firmware and activation was sent. If goPine boots, tap KEEP on the watch, then confirm below. If recovery remains, do not upload again blindly.'],confirmed:['Update confirmed by you','Boot and KEEP confirmed. Try button wake and a short timer before the overnight battery test.'],connection_failed:['Connection timed out — nothing transferred','Restart the watch into recovery, then click below immediately. The package is already prepared.'],failed:['Transfer stopped — check recovery','The update did not complete. Inspect the transfer details and watch before restarting this updater. No automatic retry was attempted.']};
-function render(s){$('version').textContent='goPine '+s.version;$('target').textContent=s.address+' · '+s.adapter;$('hash').textContent='SHA-256 '+s.sha256;$('status').textContent=text[s.state][0]+(s.state==='uploading'?' · '+s.progress+'%':'');$('instruction').textContent=text[s.state][1];$('progress').value=s.progress;$('log').textContent=s.logs.join('\n');$('upload').disabled=busy||!['ready','connection_failed'].includes(s.state);$('upload').hidden=['awaiting_keep','confirmed','failed'].includes(s.state);$('confirm').hidden=s.state!=='awaiting_keep';$('confirm').disabled=busy;}
+const text={awaiting_install:['Verified — install on the watch','Tap INSTALL on goPine, then tap KEEP after it reboots. The computer cannot install without your on-watch action.'],ready:['Ready to upload','On the watch, open Firmware update and hold PRESS AND HOLD. Once InfiniTime recovery appears, click the button below immediately.'],uploading:['Uploading','Keep the watch nearby. No further action is needed until it reboots.'],awaiting_keep:['Validated — check the watch','The watch validated the firmware and activation was sent. If goPine boots, tap KEEP on the watch, then confirm below. If recovery remains, do not upload again blindly.'],confirmed:['Update confirmed by you','Boot and KEEP confirmed. Try button wake and a short timer before the overnight battery test.'],connection_failed:['Connection timed out — nothing transferred','Restart the watch into recovery, then click below immediately. The package is already prepared.'],failed:['Transfer stopped — check recovery','The update did not complete. Inspect the transfer details and watch before restarting this updater. No automatic retry was attempted.']};
+function render(s){
+  const messages={...text};
+  if(s.direct){
+    messages.ready=['Ready to connect','On goPine, open Firmware Update and hold to connect. Leave the watch on Ready to connect, then click below. No recovery restart is needed.'];
+    messages.uploading=['Connecting and transferring','Keep goPine on the update screen. Brief disconnects resume from bytes the watch has saved and checked. You can cancel on the watch.'];
+    messages.connection_failed=['Transfer paused','Read the watch screen. If it shows an error, tap RETRY there first; then retry below. The running firmware has not been replaced.'];
+  }
+  $('version').textContent='goPine '+s.version;
+  $('target').textContent=s.address+' · '+s.adapter;
+  $('hash').textContent='SHA-256 '+s.sha256;
+  const message=messages[s.state]||['Unknown status','Inspect transfer details.'];
+  $('status').textContent=message[0]+(s.state==='uploading'?' · '+s.progress+'%':'');
+  $('instruction').textContent=message[1];
+  $('progress').value=s.progress;
+  $('log').textContent=s.logs.join('\n');
+  $('upload').textContent=s.direct?'Connect and send update':'Recovery ready — upload';
+  $('upload').disabled=busy||!['ready','connection_failed'].includes(s.state);
+  $('upload').hidden=['awaiting_keep','awaiting_install','confirmed','failed'].includes(s.state);
+  $('confirm').hidden=!['awaiting_keep','awaiting_install'].includes(s.state);
+  $('confirm').textContent=s.direct?'Installed, booted, and tapped KEEP':'I tapped KEEP';
+  $('confirm').disabled=busy;
+}
 async function call(path,method='GET'){const r=await fetch(path,{method,headers:{'X-OTA-Token':token},cache:'no-store'});if(!r.ok)throw Error('Updater request failed ('+r.status+')');return r.json();}
 async function refresh(){try{render(await call('/status'));$('error').textContent='';}catch(e){$('error').textContent='Cannot reach the local updater. Keep its terminal running.';}}
 async function action(path){busy=true;$('upload').disabled=true;$('confirm').disabled=true;try{render(await call(path,'POST'));}catch(e){$('error').textContent=e.message;}finally{busy=false;await refresh();}}

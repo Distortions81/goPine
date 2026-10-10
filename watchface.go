@@ -6,7 +6,6 @@ import (
 
 	"github.com/Distortions81/goPine/internal/gfx"
 	"github.com/Distortions81/goPine/internal/uifont"
-	"tinygo.org/x/tinyfont"
 )
 
 var warning = color.RGBA{255, 170, 68, 255}
@@ -15,9 +14,9 @@ const clockBaseline = 145
 const clockMeridiemGap = 4
 
 func clockLineWidth(text, meridiem string) int16 {
-	w, _ := tinyfont.LineWidth(&uifont.Clock, text)
+	w, _ := lineWidth(&uifont.Clock, text)
 	if meridiem != "" {
-		mw, _ := tinyfont.LineWidth(&uifont.Regular18, meridiem)
+		mw, _ := lineWidth(&uifont.Regular18, meridiem)
 		w += clockMeridiemGap + mw
 	}
 	return int16(w)
@@ -32,7 +31,7 @@ func drawLargeTime(d canvas, text, meridiem string) {
 	x := (width - clockLineWidth(text, meridiem)) / 2
 	writeLine(d, &uifont.Clock, x, clockBaseline, text, white)
 	if meridiem != "" {
-		w, _ := tinyfont.LineWidth(&uifont.Clock, text)
+		w, _ := lineWidth(&uifont.Clock, text)
 		writeLine(d, &uifont.Regular18, x+int16(w)+clockMeridiemGap, clockBaseline, meridiem, muted)
 	}
 }
@@ -97,6 +96,14 @@ func drawBattery(d canvas, x, y int16, p powerStatus) {
 }
 
 func (u *watchUI) drawFrame(d canvas, now time.Time, p powerStatus) {
+	if u.pairingVisible() {
+		u.drawPairing(d)
+		return
+	}
+	if u.powerNoticeVisible() {
+		drawCharging(d, p)
+		return
+	}
 	u.draw(d, now)
 	percent, start := percentDigits(p.Percent)
 	if u.page == pageClock {

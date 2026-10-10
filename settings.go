@@ -19,7 +19,7 @@ func calendarMillis(local time.Time) int64 {
 }
 
 func (u *watchUI) settings() checkpoint.Settings {
-	s := checkpoint.Settings{CountdownSeconds: uint32(u.timers.countdown.preset / time.Second), TouchWake: u.touchWake}
+	s := checkpoint.Settings{CountdownSeconds: uint32(u.timers.countdown.preset / time.Second), TouchWake: u.touchWake, FlipScreen: u.flipScreen}
 	for i, a := range u.timers.alarms {
 		s.Alarms[i] = checkpoint.Alarm{Hour: uint8(a.hour), Minute: uint8(a.minute), Repeat: uint8(a.repeat), Enabled: a.enabled}
 	}
@@ -192,9 +192,24 @@ type settingsKey struct {
 	ringSince                       time.Time
 }
 
-func (u *watchUI) settingsKey() settingsKey {
+// Compare the live fields directly: returning a settingsKey by value makes
+// TinyGo allocate a 288-byte temporary on every event-loop pass.
+func (k *settingsKey) matches(u *watchUI) bool {
 	t := &u.timers
-	return settingsKey{u.settings(), u.use24, u.clock.initialized, u.clock.approximate, u.clock.offset, t.watch, t.countdown, t.snooze, t.pending, t.active, t.source, t.ringSince}
+	return k.settings == u.settings() && k.use24 == u.use24 &&
+		k.initialized == u.clock.initialized && k.approximate == u.clock.approximate &&
+		k.offset == u.clock.offset && k.watch == t.watch && k.countdown == t.countdown &&
+		k.snooze == t.snooze && k.pending == t.pending && k.active == t.active &&
+		k.source == t.source && k.ringSince == t.ringSince
+}
+
+func (k *settingsKey) capture(u *watchUI) {
+	t := &u.timers
+	k.settings = u.settings()
+	k.use24, k.initialized, k.approximate = u.use24, u.clock.initialized, u.clock.approximate
+	k.offset, k.watch, k.countdown = u.clock.offset, t.watch, t.countdown
+	k.snooze, k.pending, k.active = t.snooze, t.pending, t.active
+	k.source, k.ringSince = t.source, t.ringSince
 }
 
 type settingsPersistence struct {
@@ -211,6 +226,7 @@ func loadSettings(u *watchUI, now time.Time, j *checkpoint.Journal) *settingsPer
 		if r, ok := j.Latest(); ok && r.HasSettings {
 			u.use24 = r.Use24
 			u.touchWake = r.Settings.TouchWake
+			u.flipScreen = r.Settings.FlipScreen
 			for i, a := range r.Settings.Alarms {
 				u.timers.alarms[i] = alarm{hour: int(a.Hour), minute: int(a.Minute), repeat: alarmRepeat(a.Repeat), enabled: a.Enabled}
 			}
@@ -220,17 +236,19 @@ func loadSettings(u *watchUI, now time.Time, j *checkpoint.Journal) *settingsPer
 			}
 		}
 	}
-	key := u.settingsKey()
-	return &settingsPersistence{journal: j, saved: key, observed: key}
+	p := &settingsPersistence{journal: j}
+	p.saved.capture(u)
+	p.observed.capture(u)
+	return p
 }
 
 func (p *settingsPersistence) update(u *watchUI, now time.Time, allowed bool) {
-	key := u.settingsKey()
-	if key != p.observed {
-		p.observed, p.changedAt = key, now
+	if !p.observed.matches(u) {
+		p.observed.capture(u)
+		p.changedAt = now
 		p.powerDeferred = false
 	}
-	if key == p.saved {
+	if p.saved.matches(u) {
 		u.settingsNote = ""
 		return
 	}
@@ -271,8 +289,8 @@ func (p *settingsPersistence) flush(u *watchUI, now time.Time, allowed bool) boo
 		u.settingsNote = "Storage error"
 		return false
 	}
-	key := u.settingsKey()
-	p.saved, p.observed = key, key
+	p.saved.capture(u)
+	p.observed.capture(u)
 	u.settingsNote = ""
 	return true
 }

@@ -46,21 +46,49 @@ def stage(tag, commit, repository, source, output):
                 image_bytes=len(image), package=package.name, sha256=digest)
     (output / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
     docs = f'https://github.com/{repository}/blob/{commit}/docs/ota.md'
+    owner, name = repository.split('/')
+    browser_updater = f'https://{owner.lower()}.github.io/{name}/'
     changes_path = pathlib.Path(__file__).resolve().parents[1] / 'docs/releases' / f'{version}.md'
     changes = changes_path.read_text().strip() + '\n\n' if changes_path.exists() else ''
     notes = f'''# goPine {version}
 
-{changes}Download **{package.name}** for an application-only PineTime OTA update.
-This build includes Bluetooth time sync; Bluetooth stays off outside Sync Time.
+{changes}Install with the [goPine Bluetooth updater]({browser_updater}), or download
+**{package.name}** for an application-only PineTime OTA update.
 The bootloader and stored InfiniTime recovery image are not replaced.
 
-1. Download the ZIP and SHA256SUMS. On Linux, verify the ZIP with
-   `sha256sum --check --ignore-missing SHA256SUMS` in the download directory.
-2. Prepare your updater before entering recovery. On goPine, open Settings →
-   Firmware update and hold PRESS AND HOLD until recovery appears.
-3. Send the ZIP using the firmware/Legacy DFU flow in a compatible companion
-   tool, or the repository's local updater. Do not use a resource-upload flow.
-4. When goPine boots, tap **KEEP**. A reset before KEEP can revert to recovery.
+## Update from goPine 0.3.13 or later
+
+The browser updater works with **BLE builds of goPine 0.3.13 or later** already
+installed on the watch. Use a browser with Web Bluetooth, such as Chrome or Edge
+on a supported computer, or Chrome on Android. Safari and Firefox do not support
+this connection. Linux may need additional browser configuration.
+
+1. Charge to at least **20%** or leave the watch on its charger. Tap **KEEP** if
+   the current firmware is still a trial. Disconnect phone apps and keep the
+   watch close to the computer or phone running the updater.
+2. Open the [browser updater]({browser_updater}). Choose **Use latest release**
+   if it shows **{version}**, or **Choose a ZIP file** with **{package.name}**.
+   The browser validates the package before sending it.
+3. On goPine, open **Settings → Firmware Update** and hold to connect. Leave the
+   watch on **Ready to connect**, then click **Connect & update** in the browser
+   and choose **goPine Update**.
+4. Keep the tab open and the computer or phone awake until the watch verifies
+   the complete image. If Bluetooth disconnects, keep the same page open so it
+   can resume from the watch's acknowledged offset.
+5. Tap **INSTALL** on the watch, then **KEEP** after goPine boots successfully.
+   A reset before KEEP returns to the available fallback.
+
+## Install from older goPine or InfiniTime recovery
+
+The browser updater cannot connect to the InfiniTime recovery clock. Use its
+firmware/Legacy DFU flow in a compatible companion tool, or the repository's
+Linux recovery updater, for the first installation. Do not use a resource-upload
+flow. If older goPine offers a recovery action under **Settings → Firmware
+update**, prepare the sender first and hold the on-screen button to enter it.
+Otherwise use the red recovery boot procedure at the end of these instructions.
+
+Download the ZIP and SHA256SUMS. On Linux, verify the ZIP with
+`sha256sum --check --ignore-missing SHA256SUMS` in the download directory.
 
 Using this repository's Linux updater (no Go or TinyGo needed for a downloaded ZIP):
 
@@ -71,7 +99,8 @@ bash scripts/ota-update.sh {version} --package /path/to/{package.name} --web
 On first use, also specify `--adapter hci1 --address YOUR_RECOVERY_MAC` using
 your adapter and watch address. Python 3 with venv, Git and BlueZ/gatttool are
 required. Keep the watch nearby, disconnect phone apps, and click Upload as
-soon as recovery appears. The updater never automatically retries a transfer.
+soon as recovery appears. The recovery updater never automatically retries a
+transfer. When goPine boots, tap **KEEP** before resetting the watch.
 
 The watch must already have a compatible MCUboot/InfiniTime recovery setup.
 Read the [setup, recovery behavior and update instructions]({docs}) before

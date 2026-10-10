@@ -5,8 +5,6 @@ package main
 import (
 	"device/nrf"
 	"machine"
-	"runtime/interrupt"
-	"runtime/volatile"
 	"time"
 )
 
@@ -17,7 +15,6 @@ const (
 
 type touchController struct {
 	tracker touchTracker
-	pending volatile.Register8
 	ready   bool
 	asleep  bool
 }
@@ -58,12 +55,7 @@ func (t *touchController) Configure() error {
 }
 
 func (t *touchController) enableInterrupt() error {
-	t.pending.Set(0)
-	if err := touchIRQPin.SetInterrupt(machine.PinFalling, func(machine.Pin) {
-		t.pending.Set(1)
-	}); err != nil {
-		return err
-	}
+	enableTouchInterrupt()
 	t.ready = true
 	return nil
 }
@@ -72,26 +64,8 @@ func (t *touchController) Sleep() {
 	if t.asleep {
 		return
 	}
-	if t.ready {
-		state := interrupt.Disable()
-		_ = touchIRQPin.SetInterrupt(0, nil)
-		// TinyGo 0.42 masks the IRQ but leaves the GPIOTE event channel
-		// configured. Release it too, and discard any latched edge before
-		// another GPIOTE interrupt can try to call the removed callback.
-		mask := uint32(nrf.GPIOTE_CONFIG_MODE_Msk | nrf.GPIOTE_CONFIG_PSEL_Msk)
-		want := uint32(nrf.GPIOTE_CONFIG_MODE_Event<<nrf.GPIOTE_CONFIG_MODE_Pos) |
-			uint32(touchIRQPin)<<nrf.GPIOTE_CONFIG_PSEL_Pos
-		for i := range nrf.GPIOTE.CONFIG {
-			if nrf.GPIOTE.CONFIG[i].Get()&mask == want {
-				nrf.GPIOTE.INTENCLR.Set(1 << uint(i))
-				nrf.GPIOTE.CONFIG[i].Set(0)
-				nrf.GPIOTE.EVENTS_IN[i].Set(0)
-			}
-		}
-		interrupt.Restore(state)
-	}
+	disableTouchInterrupt()
 	t.ready, t.asleep = false, true
-	t.pending.Set(0)
 	t.tracker = touchTracker{}
 	if err := sleepTouchController(boardI2C{}, touchResetPin.Set, time.Sleep); err != nil {
 		// A failed controller must not keep generating IRQs or wake the LCD.
@@ -115,10 +89,7 @@ func (t *touchController) Poll() touchEvent {
 	if !t.ready {
 		return touchEvent{}
 	}
-	state := interrupt.Disable()
-	pending := t.pending.Get() != 0
-	t.pending.Set(0)
-	interrupt.Restore(state)
+	pending := takePortInput(touchInputMask)
 
 	return t.tracker.poll(boardI2C{}, pending, time.Now())
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -85,13 +86,20 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		ui    watchUI
 		power powerStatus
 	}{
+		{"pairing-code", watchUI{page: pagePhone, pairing: &pairingState{code: 12346}}, powerStatus{Percent: 73}},
+		{"pairing-saved", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 2}}, powerStatus{Percent: 73}},
+		{"display-flipped", watchUI{page: pageDisplaySettings, flipScreen: true}, powerStatus{Percent: 73}},
 		{"clock", watchUI{page: pageClock}, powerStatus{Percent: 73}},
 		{"clock-charging", watchUI{page: pageClock}, powerStatus{Percent: 68, State: chargeCharging}},
 		{"clock-powered", watchUI{page: pageClock}, powerStatus{Percent: 100, State: chargeExternalPower}},
 		{"clock-low", watchUI{page: pageClock}, powerStatus{Percent: 9}},
+		{"charging", watchUI{page: pageClock, powerNotice: true}, powerStatus{Percent: 68, State: chargeCharging}},
+		{"charging-full", watchUI{page: pageClock, powerNotice: true}, powerStatus{Percent: 100, State: chargeExternalPower}},
+		{"charging-stopped", watchUI{page: pageClock, powerNotice: true}, powerStatus{Percent: 93, State: chargeExternalPower}},
+		{"unplugged", watchUI{page: pageClock, powerNotice: true}, powerStatus{Percent: 68}},
 		{"clock-24h", watchUI{page: pageClock, use24: true}, powerStatus{Percent: 73}},
 		{"settings", watchUI{page: pageSettings}, powerStatus{Percent: 73}},
-		{"settings-touch-on", watchUI{page: pageSettings, touchWake: true}, powerStatus{Percent: 73}},
+		{"settings-touch-on", watchUI{page: pageDisplaySettings, touchWake: true}, powerStatus{Percent: 73}},
 		{"settings-pending", watchUI{page: pageSettings, settingsNote: "Save pending"}, powerStatus{Percent: 73}},
 		{"time-settings", watchUI{page: pageTimeSettings}, powerStatus{Percent: 73}},
 		{"set-time", watchUI{page: pageSetTime, edit: clockEdit{hour: 12, minute: 34}}, powerStatus{Percent: 73}},
@@ -102,6 +110,27 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		{"trial", watchUI{page: pageTrial}, powerStatus{Percent: 73}},
 		{"error", watchUI{page: pageMessage, message: "Recovery setup failed. Check power and use wired setup again."}, powerStatus{Percent: 73}},
 		{"apps", watchUI{page: pageApps}, powerStatus{Percent: 73}},
+		{"music", watchUI{page: pageMusic, phone: samplePhone(now)}, powerStatus{Percent: 73}},
+		{"phone", watchUI{page: pagePhone, phone: samplePhone(now)}, powerStatus{Percent: 73}},
+		{"music-off", watchUI{page: pageMusic, phone: &phoneState{status: "Bluetooth off"}}, powerStatus{Percent: 73}},
+		{"inbox", watchUI{page: pageInbox, notifications: sampleNotifications()}, powerStatus{Percent: 73}},
+		{"inbox-empty", watchUI{page: pageInbox, notifications: &notificationState{}}, powerStatus{Percent: 73}},
+		{"notification", watchUI{page: pageNotification, notifications: sampleNotifications()}, powerStatus{Percent: 73}},
+		{"update-waiting", watchUI{page: pageTransfer, transfer: &transferState{phase: updateWaiting, open: true}}, powerStatus{Percent: 73}},
+		{"update-receiving", watchUI{page: pageTransfer, transfer: &transferState{phase: updateReceiving, open: true, percent: 58}}, powerStatus{Percent: 73}},
+		{"update-verifying", watchUI{page: pageTransfer, transfer: &transferState{phase: updateVerifying, open: true, percent: 100}}, powerStatus{Percent: 73}},
+		{"update-ready", watchUI{page: pageTransfer, transfer: &transferState{phase: updateReady, open: true, percent: 100, version: "0.3.14"}}, powerStatus{Percent: 73}},
+		{"update-failed", watchUI{page: pageTransfer, transfer: &transferState{phase: updateFailed, open: true, message: "Connection interrupted"}}, powerStatus{Percent: 73}},
+		{"notification-read", watchUI{page: pageNotification, notifications: notificationPreview("read")}, powerStatus{Percent: 73}},
+		{"notification-more", watchUI{page: pageNotification, notifications: notificationPreview("more")}, powerStatus{Percent: 73}},
+		{"notification-replaced", watchUI{page: pageNotification, notifications: notificationPreview("replaced")}, powerStatus{Percent: 73}},
+		{"notification-call", watchUI{page: pageNotification, notifications: notificationPreview("call")}, powerStatus{Percent: 73}},
+		{"inbox-quiet", watchUI{page: pageInbox, notifications: notificationPreview("quiet")}, powerStatus{Percent: 73}},
+		{"clock-unread", watchUI{page: pageClock, notifications: sampleNotifications()}, powerStatus{Percent: 73}},
+		{"weather", watchUI{page: pageWeather, weather: sampleWeather(now), clock: watchClock{initialized: true}}, powerStatus{Percent: 73}},
+		{"weather-forecast", watchUI{page: pageWeatherForecast, weather: sampleWeather(now), clock: watchClock{initialized: true}}, powerStatus{Percent: 73}},
+		{"weather-empty", watchUI{page: pageWeather, weather: &weatherState{}}, powerStatus{Percent: 73}},
+		{"weather-update", watchUI{page: pageWeatherSync, weather: &weatherState{open: true, expires: now.Add(weatherWindow), status: "Connect your phone"}}, powerStatus{Percent: 73}},
 		{"alarms", watchUI{page: pageAlarms, timers: newTimerState(), clock: watchClock{initialized: true}}, powerStatus{Percent: 73}},
 		{"alarms-unset", watchUI{page: pageAlarms, timers: newTimerState()}, powerStatus{Percent: 73}},
 		{"alarm-edit", watchUI{page: pageAlarmEdit, edit: clockEdit{hour: 7, minute: 30}}, powerStatus{Percent: 73}},
@@ -113,6 +142,9 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		{"timer-alert", watchUI{page: pageAlert, timers: timerState{active: true, source: countdownSource}}, powerStatus{Percent: 73}},
 	} {
 		var renderer frameRenderer
+		if err := d.SetFlipped(screen.ui.flipScreen); err != nil {
+			t.Fatal(err)
+		}
 		if err := renderer.render(d, func(c canvas) {
 			screen.ui.drawFrame(c, now, screen.power)
 		}); err != nil {
@@ -190,5 +222,40 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 	event, err = d.Wait(100 * time.Millisecond)
 	if err != nil || event.Kind != inputQuit {
 		t.Fatalf("quit not delivered: %+v, %v", event, err)
+	}
+}
+
+func TestDesktopFlippedPixels(t *testing.T) {
+	t.Setenv("SDL_VIDEODRIVER", "dummy")
+	display, err := openDisplay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer display.Close()
+	d := display.(*desktopDisplay)
+	u := newWatchUI(firmwareConfirmed)
+	now := time.Unix(0, 0)
+	var r frameRenderer
+	draw := func(c canvas) { u.drawFrame(c, now, powerStatus{Percent: 73}) }
+	if err := r.render(d, draw); err != nil {
+		t.Fatal(err)
+	}
+	pixels := make([]color.RGBA, 240*240)
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 240; x++ {
+			pixels[y*240+x] = color.RGBAModel.Convert(d.surface.At(x, y)).(color.RGBA)
+		}
+	}
+	d.SetFlipped(true)
+	r.invalidate()
+	if err := r.render(d, draw); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 240; x++ {
+			if color.RGBAModel.Convert(d.surface.At(239-x, 239-y)).(color.RGBA) != pixels[y*240+x] {
+				t.Fatalf("rotated pixel mismatch at %d,%d", x, y)
+			}
+		}
 	}
 }

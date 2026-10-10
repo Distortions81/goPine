@@ -6,6 +6,8 @@
 #include "nimble/nimble_npl.h"
 
 static struct ble_npl_eventq *queues;
+static struct ble_npl_eventq *host_queue;
+static void pump(bool controller_only);
 static struct ble_npl_callout *callouts;
 static uint32_t last_ticks;
 static uint64_t total_ticks;
@@ -76,7 +78,13 @@ ble_npl_error_t ble_npl_sem_release(struct ble_npl_sem *s){uint32_t p=ble_npl_hw
 uint16_t ble_npl_sem_get_count(struct ble_npl_sem *s){return s->count;}
 ble_npl_error_t ble_npl_sem_pend(struct ble_npl_sem *s,uint32_t timeout){
     uint32_t start=ble_npl_time_get();
-    do{uint32_t p=ble_npl_hw_enter_critical();if(s->count){s->count--;ble_npl_hw_exit_critical(p);return 0;}ble_npl_hw_exit_critical(p);gopine_ble_pump();}while((uint32_t)(ble_npl_time_get()-start)<timeout);
+    // NimBLE's only semaphore wait is for a controller HCI acknowledgement.
+    // Dispatching host events here reenters the host while its HCI command (or
+    // connection teardown) is still on the stack. Only the controller may run;
+    // its transport delivers command acknowledgements directly, without a host
+    // queue event. In particular, defer disconnect events until terminate has
+    // returned and ble_hs_stop has counted the outstanding connection.
+    do{uint32_t p=ble_npl_hw_enter_critical();if(s->count){s->count--;ble_npl_hw_exit_critical(p);return 0;}ble_npl_hw_exit_critical(p);pump(true);}while((uint32_t)(ble_npl_time_get()-start)<timeout);
     return BLE_NPL_TIMEOUT;
 }
 void ble_npl_callout_init(struct ble_npl_callout *co,struct ble_npl_eventq *q,ble_npl_event_fn *fn,void *arg){
@@ -90,7 +98,25 @@ bool ble_npl_callout_is_active(struct ble_npl_callout *co){return co->active;}
 uint32_t ble_npl_callout_get_ticks(struct ble_npl_callout *co){return co->deadline;}
 uint32_t ble_npl_callout_remaining_ticks(struct ble_npl_callout *co,uint32_t now){int32_t n=(int32_t)(co->deadline-now);return n>0?(uint32_t)n:0;}
 void ble_npl_callout_set_arg(struct ble_npl_callout *co,void *arg){co->ev.arg=arg;}
-void gopine_ble_pump(void){
+// Called again with interrupts masked at the final WFE handoff. An ISR which
+// queued work just before that handoff must prevent sleep, even if its NVIC
+// pending bit was already consumed. Radio/RTC interrupts wake earlier as needed.
+uint32_t gopine_ble_next_work(void) {
+    uint32_t s=ble_npl_hw_enter_critical(), delay=240000, now=ble_npl_time_get();
+    for(struct ble_npl_eventq *q=queues;q;q=q->next) {
+        if(q->head) { delay=0; break; }
+    }
+    for(struct ble_npl_callout *co=callouts;co;co=co->next) {
+        if(!co->active) continue;
+        int32_t remaining=(int32_t)(co->deadline-now);
+        uint32_t due=remaining>0?(uint32_t)remaining:0;
+        if(due<delay) delay=due;
+    }
+    ble_npl_hw_exit_critical(s);
+    return delay;
+}
+void gopine_ble_set_host_queue(struct ble_npl_eventq *q){host_queue=q;}
+static void pump(bool controller_only){
     uint32_t now=ble_npl_time_get();
     for(struct ble_npl_callout *co=callouts;co;co=co->next){
         bool run=false;
@@ -99,6 +125,7 @@ void gopine_ble_pump(void){
         ble_npl_hw_exit_critical(s);
         if(run)ble_npl_event_run(&co->ev);
     }
-    for(struct ble_npl_eventq *q=queues;q;q=q->next){if(q->busy)continue;q->busy=true;for(int i=0;i<16;i++){struct ble_npl_event *ev=ble_npl_eventq_get(q,0);if(!ev)break;ble_npl_event_run(ev);}q->busy=false;}
+    for(struct ble_npl_eventq *q=queues;q;q=q->next){if(q->busy || (controller_only && q==host_queue))continue;q->busy=true;for(int i=0;i<16;i++){struct ble_npl_event *ev=ble_npl_eventq_get(q,0);if(!ev)break;ble_npl_event_run(ev);}q->busy=false;}
 }
+void gopine_ble_pump(void){pump(false);}
 void ble_npl_time_delay(uint32_t ticks){uint32_t start=ble_npl_time_get();while((uint32_t)(ble_npl_time_get()-start)<ticks)gopine_ble_pump();}

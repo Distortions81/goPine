@@ -6,8 +6,9 @@ import (
 	"device/nrf"
 	"image/color"
 	"machine"
-	"runtime/interrupt"
+	"runtime/volatile"
 	"time"
+	"unsafe"
 
 	"tinygo.org/x/drivers"
 	"tinygo.org/x/drivers/pixel"
@@ -20,7 +21,10 @@ type pineTimeDisplay struct {
 	batteryMillivolts uint32
 	batteryReady      bool
 	buttonPressed     bool
+	button            buttonInput
+	charger           chargerInput
 	screenOn          bool
+	lcdPower          lcdPower
 	touchWake         bool
 	sleepAt           time.Time
 	touch             touchController
@@ -34,7 +38,6 @@ const (
 	powerPresencePin    = machine.Pin(19)
 	batteryVoltagePin   = machine.Pin(31)
 	screenTimeout       = 15 * time.Second
-	buttonPollInterval  = 20 * time.Millisecond
 	touchPollInterval   = 2 * time.Millisecond
 )
 
@@ -59,13 +62,7 @@ func openDisplay() (clockDisplay, error) {
 	machine.LCD_CS.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.LCD_CS.High()
 
-	machine.SPI0.Configure(machine.SPIConfig{
-		Frequency: 8_000_000,
-		SCK:       machine.SPI0_SCK_PIN,
-		SDO:       machine.SPI0_SDO_PIN,
-		SDI:       machine.SPI0_SDI_PIN,
-		Mode:      3,
-	})
+	configureDisplaySPI()
 
 	// The clock does not use external flash, so place it in deep power-down.
 	flashCS.Low()
@@ -101,12 +98,10 @@ func openDisplay() (clockDisplay, error) {
 	})
 	nrf.SAADC.ENABLE.Set(0)
 
-	machine.BUTTON_OUT.Configure(machine.PinConfig{Mode: machine.PinOutput})
-	machine.BUTTON_OUT.Low()
-	machine.BUTTON_IN.Configure(machine.PinConfig{Mode: machine.PinInput})
+	configureInputInterrupts()
+	configureIdleTimer()
 	machine.VIBRATOR_PIN.High() // Active-low, off before configuring output.
 	machine.VIBRATOR_PIN.Configure(machine.PinConfig{Mode: machine.PinOutput})
-	configureIdleInterrupts()
 
 	d := &pineTimeDisplay{
 		DeviceOf:   &display,
@@ -114,6 +109,9 @@ func openDisplay() (clockDisplay, error) {
 		screenOn:   true,
 		sleepAt:    time.Now().Add(screenTimeout),
 	}
+	d.lcdPower.woke(time.Now())
+	d.charger.state = readChargerState()
+	d.charger.candidate = d.charger.state
 	// Touch is optional at runtime so a controller fault cannot prevent the
 	// side button and clock display from working.
 	if configureBoardI2C() == nil {
@@ -143,18 +141,15 @@ func (d *pineTimeDisplay) PowerStatus() powerStatus {
 		d.batteryReady = true
 	}
 
-	state := chargeDischarging
-	if !chargeIndicationPin.Get() {
-		state = chargeCharging
-	} else if !powerPresencePin.Get() {
-		state = chargeExternalPower
-	}
-
 	return powerStatus{
 		Percent:    estimateBatteryPercent(uint16(d.batteryMillivolts)),
 		Millivolts: uint16(d.batteryMillivolts),
-		State:      state,
+		State:      readChargerState(),
 	}
+}
+
+func readChargerState() chargeState {
+	return chargerState(!powerPresencePin.Get(), !chargeIndicationPin.Get())
 }
 
 func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
@@ -163,7 +158,7 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 	for {
 		now := time.Now()
 		// Service the side button/watchdog even during continuous touch events.
-		pressed := d.readButton()
+		pressed := d.readButton(now)
 		if pressed && !d.buttonPressed {
 			d.buttonPressed = true
 			d.touchEvents.clear()
@@ -183,7 +178,13 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 			}
 		}
 		d.buttonPressed = pressed
+		if d.charger.update(readChargerState(), takeChargerInput(), now) {
+			return inputEvent{Kind: inputPower}, nil
+		}
 		d.serviceInput()
+		if timeRadioHasUpdate() {
+			return inputEvent{Kind: inputRefresh}, nil
+		}
 		if touch := d.touchEvents.pop(); touch.Activity {
 			if !d.screenOn && !d.touchWake {
 				continue
@@ -214,17 +215,18 @@ func (d *pineTimeDisplay) Wait(duration time.Duration) (inputEvent, error) {
 			return inputEvent{Kind: inputRefresh}, nil
 		}
 
-		interval := buttonPollInterval
-		if d.touch.tracker.down {
-			interval = touchPollInterval // Catch brief IRQ windows during contact.
+		var screenOffAt, vibrationEnd time.Time
+		if d.screenOn {
+			screenOffAt = d.sleepAt
 		}
-		// Do not round a timer/alert deadline up to a full input poll.
-		remaining := max(time.Until(refreshAt), minimumLoopWait)
-		if !d.screenOn && !d.buttonPressed && !d.touch.tracker.down && !timeRadioNeedsService() {
-			d.waitAsleep(remaining)
-		} else {
-			time.Sleep(min(interval, remaining))
+		if d.vibrating {
+			vibrationEnd = d.vibrationEnds
 		}
+		delay := inputIdleDelay(time.Now(), refreshAt, screenOffAt, d.button.releaseAt, vibrationEnd, d.touch.tracker.down, false)
+		if !d.charger.due.IsZero() {
+			delay = min(delay, max(minimumLoopWait, d.charger.due.Sub(time.Now())))
+		}
+		waitForInput(delay)
 	}
 }
 
@@ -285,26 +287,15 @@ func (d *pineTimeDisplay) SetVibration(on bool) {
 	machine.VIBRATOR_PIN.Set(!on)
 }
 
-func (d *pineTimeDisplay) readButton() bool {
-	// BUTTON_OUT must briefly be high for BUTTON_IN to produce a stable value.
-	// Repeated stores provide the short settling delay without leaving the
-	// circuit powered between polls.
-	for i := 0; i < 8; i++ {
-		machine.BUTTON_OUT.High()
-	}
-	pressed := machine.BUTTON_IN.Get()
-	machine.BUTTON_OUT.Low()
-	state := interrupt.Disable()
-	pressed = pressed || buttonWakePending.Get() != 0
-	buttonWakePending.Set(0)
-	interrupt.Restore(state)
-
+func (d *pineTimeDisplay) readButton(now time.Time) bool {
+	pressLatched := takePortInput(buttonInputMask)
+	high := machine.BUTTON_IN.Get()
 	// Factory bootloaders may leave the watchdog running. Do not feed it during
 	// a long press, preserving the button-held reset/bootloader escape route.
-	if !pressed {
+	if !high {
 		nrf.WDT.RR[0].Set(0x6E524635)
 	}
-	return pressed
+	return d.button.update(high, pressLatched, now)
 }
 
 func (d *pineTimeDisplay) setScreen(on bool) error {
@@ -312,24 +303,70 @@ func (d *pineTimeDisplay) setScreen(on bool) error {
 		return nil
 	}
 	if on {
-		machine.SPI0.Bus.ENABLE.Set(nrf.SPIM_ENABLE_ENABLE_Enabled)
+		configureDisplaySPI()
+		machine.LCD_RS.Configure(machine.PinConfig{Mode: machine.PinOutput})
 		if err := d.DeviceOf.Sleep(false); err != nil {
 			return err
 		}
+		d.lcdPower.woke(time.Now())
 		d.touch.Wake()
+		// SLPOUT also requires 5 ms before another LCD command, including
+		// when touch-to-wake is on and touch.Wake returns immediately.
+		time.Sleep(6 * time.Millisecond)
 		setBacklight(true)
 	} else {
 		setBacklight(false)
-		if err := d.DeviceOf.Sleep(true); err != nil {
+		if err := d.lcdPower.sleep(time.Now, time.Sleep, d.DeviceOf.Sleep); err != nil {
 			return err
 		}
-		machine.SPI0.Bus.ENABLE.Set(0)
+		// TinyGo's driver waits 5 ms after SLPIN. Add a tick-rounding margin
+		// before releasing the bus and D/C pin, as InfiniTime does.
+		time.Sleep(time.Millisecond)
+		suspendDisplaySPI()
+		disconnectInput(machine.LCD_RS)
 		if !d.touchWake {
 			d.touch.Sleep()
 		}
 	}
 	d.screenOn = on
 	return nil
+}
+
+func configureDisplaySPI() {
+	// The sleep workaround resets SPIM0, so restore its full configuration.
+	machine.SPI0_SCK_PIN.High()
+	machine.SPI0_SCK_PIN.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	machine.SPI0_SDO_PIN.Low()
+	machine.SPI0_SDO_PIN.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	machine.SPI0_SDI_PIN.Configure(machine.PinConfig{Mode: machine.PinInput})
+	machine.SPI0.Configure(machine.SPIConfig{
+		Frequency: 8_000_000,
+		SCK:       machine.SPI0_SCK_PIN,
+		SDO:       machine.SPI0_SDO_PIN,
+		SDI:       machine.SPI0_SDI_PIN,
+		Mode:      3,
+	})
+}
+
+func suspendDisplaySPI() {
+	machine.SPI0.Bus.ENABLE.Set(0)
+	// nRF52832 anomaly 89: disabling SPIM after EasyDMA + GPIOTE use can
+	// leave a 400–450 uA draw. Nordic requires a peripheral POWER cycle,
+	// including the readback, then full reconfiguration before reuse.
+	// SPIM0 shares this block with TWI0; the board's I2C uses TWI1.
+	power := (*volatile.Register32)(unsafe.Pointer(uintptr(0x40003ffc)))
+	power.Set(0)
+	_ = power.Get()
+	power.Set(1)
+	// Match InfiniTime's SpiMaster::Sleep: release the SPI pins and their
+	// digital input buffers. CS stays high and LCD reset stays deasserted.
+	disconnectInput(machine.SPI0_SCK_PIN)
+	disconnectInput(machine.SPI0_SDO_PIN)
+	disconnectInput(machine.SPI0_SDI_PIN)
+}
+
+func disconnectInput(pin machine.Pin) {
+	nrf.P0.PIN_CNF[pin].Set(nrf.GPIO_PIN_CNF_INPUT_Disconnect << nrf.GPIO_PIN_CNF_INPUT_Pos)
 }
 
 func setBacklight(on bool) {
@@ -343,4 +380,18 @@ func (d *pineTimeDisplay) Close() error {
 	d.SetVibration(false)
 	d.touch.Close()
 	return d.setScreen(false)
+}
+
+// The controller rotates the pixels without a frame buffer or CPU copy.
+func (d *pineTimeDisplay) SetFlipped(flipped bool) error {
+	rotation := st7789.Rotation(drivers.Rotation0)
+	if flipped {
+		rotation = drivers.Rotation180
+	}
+	if err := d.SetRotation(rotation); err != nil {
+		return err
+	}
+	d.touchEvents.clear()
+	d.touch.tracker.cancelContact()
+	return nil
 }

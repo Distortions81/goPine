@@ -19,7 +19,7 @@ func (s *countingStrip) SetPixel(x, y int16, c color.RGBA) {
 }
 
 func TestDirectTextPreservesTinyFontPixels(t *testing.T) {
-	for _, font := range []tinyfont.Fonter{&uifont.Bold18, &uifont.Clock, &tinyfont.Picopixel} {
+	for _, font := range []tinyfont.Fonter{&uifont.Regular18, &uifont.Bold18, &uifont.Bold24, &uifont.Meridiem, &uifont.Clock, &tinyfont.Picopixel} {
 		for _, at := range [][2]int16{{18, 31}, {-5, 2}, {100, 234}} {
 			ref, got := &memoryDisplay{}, &memoryDisplay{}
 			ref.FillScreen(black)

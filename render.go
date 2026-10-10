@@ -1,14 +1,16 @@
 package main
 
 import (
-	"hash/crc32"
 	"image/color"
 
+	"github.com/Distortions81/goPine/internal/framehash"
 	"github.com/Distortions81/goPine/internal/gfx"
+	"github.com/Distortions81/goPine/internal/uifont"
 	"tinygo.org/x/drivers/pixel"
 )
 
 const stripHeight = 8
+const allStrips = uint32(1<<(240/stripHeight) - 1)
 
 // A full RGB444 frame needs 86KB, more than the watch's entire RAM. Rasterize
 // into one reusable 2,880-byte strip instead. No glyph or button pixel is sent
@@ -16,7 +18,7 @@ const stripHeight = 8
 type frameRenderer struct {
 	strip  stripCanvas
 	hashes [240 / stripHeight]uint32
-	valid  [240 / stripHeight]bool
+	valid  uint32
 }
 
 type stripCanvas struct {
@@ -24,25 +26,64 @@ type stripCanvas struct {
 	y      int16
 }
 
-func (r *frameRenderer) invalidate() { r.valid = [240 / stripHeight]bool{} }
+func (r *frameRenderer) invalidate() { r.valid = 0 }
+
+// Only narrow redraws when the sole change is a known animated value.
+// Everything else (page, controls, lap, power, messages, etc.) uses a full pass.
+// Keep the comparison temporary out of the long-lived event-loop stack frame.
+//
+//go:noinline
+func changedStrips(previous, next *frameKey) uint32 {
+	before := *previous
+	if before.page != next.page {
+		return allStrips
+	}
+	lo, hi := uifont.Bold24.VerticalBounds()
+	top, bottom := timerValueBaseline+int(lo), timerValueBaseline+int(hi)
+	switch next.page {
+	case pageStopwatch, pageCountdown:
+		before.timer.value = next.timer.value
+	case pageUpdate:
+		before.step = next.step
+		top = updateCounterBaseline + int(lo)
+		bottom = max(updateCounterBaseline+int(hi), updateProgressY+3)
+	default:
+		return allStrips
+	}
+	if before != *next {
+		return allStrips
+	}
+	first, end := max(0, top)/stripHeight, min(240, bottom+stripHeight-1)/stripHeight
+	return (uint32(1)<<end - 1) &^ (uint32(1)<<first - 1)
+}
 
 func (r *frameRenderer) render(d clockDisplay, draw func(canvas)) error {
+	return r.renderStrips(d, draw, allStrips)
+}
+
+func (r *frameRenderer) renderStrips(d clockDisplay, draw func(canvas), mask uint32) error {
 	if r.strip.bitmap.Len() == 0 {
 		r.strip.bitmap = pixel.NewImage[pixel.RGB444BE](240, stripHeight)
 	}
+	mask |= allStrips &^ r.valid // Wake and failed display flushes force repaint.
 	for i := range r.hashes {
+		bit := uint32(1) << uint(i)
+		if mask&bit == 0 {
+			continue
+		}
 		if input, ok := d.(interface{ serviceInput() }); ok {
 			input.serviceInput()
 		}
 		r.strip.y = int16(i * stripHeight)
 		r.strip.FillScreen(black)
 		draw(&r.strip)
-		hash := crc32.ChecksumIEEE(r.strip.bitmap.RawBuffer())
-		if !r.valid[i] || r.hashes[i] != hash {
+		hash := framehash.Sum32(r.strip.bitmap.RawBuffer())
+		if r.valid&bit == 0 || r.hashes[i] != hash {
 			if err := d.DrawBitmap(0, r.strip.y, r.strip.bitmap); err != nil {
 				return err
 			}
-			r.hashes[i], r.valid[i] = hash, true
+			r.hashes[i] = hash
+			r.valid |= bit
 		}
 	}
 	if input, ok := d.(interface{ serviceInput() }); ok {
@@ -61,14 +102,29 @@ func (s *stripCanvas) ClipBounds() (int, int, int, int) {
 	return 0, int(s.y), 240, int(s.y) + stripHeight
 }
 func (s *stripCanvas) SetPixel(x, y int16, c color.RGBA) {
-	if x >= 0 && x < 240 && y >= s.y && y < s.y+stripHeight {
-		if c.A == 0 {
-			return
+	if x < 0 || x >= 240 || y < s.y || y >= s.y+stripHeight || c.A == 0 {
+		return
+	}
+	// The viewport check above covers both the packed read and write. Work
+	// directly on the two affected bytes and preserve the neighboring nibble.
+	n := (int(y)-int(s.y))*240 + int(x)
+	i := n * 3 / 2
+	buf := s.bitmap.RawBuffer()
+	if c.A != 255 {
+		var value pixel.RGB444BE
+		if n&1 == 0 {
+			value = pixel.RGB444BE(buf[i])<<4 | pixel.RGB444BE(buf[i+1]>>4)
+		} else {
+			value = pixel.RGB444BE(buf[i]&15)<<8 | pixel.RGB444BE(buf[i+1])
 		}
-		if c.A != 255 {
-			c = gfx.Over(s.bitmap.Get(int(x), int(y-s.y)).RGBA(), c)
-		}
-		s.bitmap.Set(int(x), int(y-s.y), pixel.NewColor[pixel.RGB444BE](c.R, c.G, c.B))
+		c = gfx.Over(value.RGBA(), c)
+	}
+	if n&1 == 0 {
+		buf[i] = c.R&0xf0 | c.G>>4
+		buf[i+1] = buf[i+1]&0x0f | c.B&0xf0
+	} else {
+		buf[i] = buf[i]&0xf0 | c.R>>4
+		buf[i+1] = c.G&0xf0 | c.B>>4
 	}
 }
 func (s *stripCanvas) FillScreen(c color.RGBA) {

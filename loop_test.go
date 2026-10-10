@@ -26,6 +26,7 @@ type scriptDisplay struct {
 	frameTime          time.Duration
 	powerReads         int
 	touchWake          bool
+	power              *powerStatus
 }
 
 func newScriptDisplay() *scriptDisplay {
@@ -73,6 +74,9 @@ func (d *scriptDisplay) Display() error {
 }
 func (d *scriptDisplay) PowerStatus() powerStatus {
 	d.powerReads++
+	if d.power != nil {
+		return *d.power
+	}
 	return powerStatus{Percent: 80}
 }
 func (d *scriptDisplay) SetTouchWake(enabled bool) { d.touchWake = enabled }
@@ -107,7 +111,7 @@ func TestScriptCountdownWakesAndDismisses(t *testing.T) {
 	u.timers.countdown = countdown{preset: 3 * time.Second, remaining: 3 * time.Second}
 	d.steps = []scriptStep{
 		{at: 0, event: inputEvent{Kind: inputSwipeRight}},
-		{at: 10 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 120, Y: 184}},
+		{at: 10 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 120, Y: 154}},
 		{at: 20 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 60, Y: 205}},
 		{at: time.Second, event: inputEvent{Kind: inputSleep}},
 		{at: 3100 * time.Millisecond, check: func() {
@@ -256,6 +260,7 @@ func TestScriptTouchSettingSavesWithoutPeriodicPowerPoll(t *testing.T) {
 	d.steps = []scriptStep{
 		{event: inputEvent{Kind: inputSwipeLeft}},
 		{at: 100 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 120, Y: 195}},
+		{at: 150 * time.Millisecond, event: inputEvent{Kind: inputTap, X: 120, Y: 80}},
 		{at: 200 * time.Millisecond, event: inputEvent{Kind: inputSleep}, check: func() {
 			if !d.touchWake {
 				t.Fatal("UI toggle did not reach display")

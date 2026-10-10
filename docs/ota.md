@@ -1,12 +1,69 @@
 # InfiniTime-compatible Bluetooth OTA
 
-goPine uses the existing **MCUboot image + Nordic Legacy DFU ZIP** format. The
-Bluetooth receiver is the official InfiniTime recovery firmware, not a second
-BLE stack in the TinyGo application. Stock InfiniTime companion tools can send
-the ZIP while recovery is running. Host Bluetooth transfer, trial boot, on-watch
-KEEP/REVERT, and re-entry to recovery after KEEP have been verified on this watch.
-Persistence across an ordinary reboot after KEEP and power-loss behavior still
-need hardware verification.
+goPine uses the existing **MCUboot image + Nordic Legacy DFU ZIP** format.
+The last confirmed installed version is 0.3.14, with successful boot and KEEP.
+A local 0.3.15 image completed direct transfer and on-watch verification; boot and
+KEEP for that build remain unconfirmed. Recovery remains available through the
+bootloader for older firmware, emergencies and existing phone DFU clients.
+
+## Update inside goPine (0.3.13 and newer)
+
+Use the [browser updater](https://distortions81.github.io/goPineTime/) to choose the
+latest published compatible release or a local application ZIP. It checks the
+package before connecting, resumes interrupted transfers in the same open tab,
+and waits for on-watch INSTALL and KEEP. See the [browser guide](web-updater.md)
+for supported browsers and Linux Chrome setup. Direct-update rollback and
+power-loss behavior still need dedicated hardware verification.
+
+The existing Linux updater is also available:
+
+First install 0.3.13 or later through the legacy recovery route below. After that, prepare
+a later application ZIP and start the local updater:
+
+```sh
+bash scripts/ota-update.sh VERSION --package /path/to/gopine-dfu-VERSION.zip --direct --web
+```
+
+Omit `--package` to build first. The wrapper installs pinned Bleak 0.22.3 for
+this mode. A previously saved recovery address is converted to goPine's address
+by flipping the low byte's least significant bit; an explicit `--address` in
+**direct mode must instead be the goPine address**. For this watch these are
+`C9:9E:15:7A:69:B5` (recovery) and `C9:9E:15:7A:69:B4` (goPine), via `hci1`.
+
+1. Prepare the package and open the printed local URL before touching the watch.
+2. On a confirmed goPine build, open **Settings → Firmware Update** and hold for
+   three seconds. Leave it on **Ready to connect**, near the adapter, with phone
+   Bluetooth disconnected. At least 20% battery or external power is required.
+3. Click **Connect and send update**. The watch stays inside goPine, shows
+   progress and keeps its screen on. The sender resumes acknowledged bytes
+   after brief disconnects in the same session. Cancel, Back or the side button
+   ends the session; a timer alert also cancels it. Normal phone mode is stopped.
+4. The watch checks the received image and shows its version with **Install**.
+   Tap Install to recheck power/integrity and request a trial boot. Uploading
+   alone never activates firmware. After reboot, check operation and tap **KEEP**.
+   REVERT or reset before KEEP requests MCUboot rollback to the preceding goPine.
+
+The session expires after ten minutes without transfer activity. A failed or
+expired session offers Retry. Cancelling before Install leaves the current
+firmware running; starting a new transfer reuses the secondary slot and discards
+its older rollback image. There is no transfer resume across watch reboot or a
+new updater process. Automatic reconnect waits up to 90 seconds without progress.
+
+The service uses UUID `00060000-78fc-48fe-8e23-433b3a1942d0`, with control/data/
+status suffixes `00060001`/`00060002`/`00060003`. All integers are little-endian.
+Control Begin is `[1, session:u32, size:u32]`; Verify and Cancel are
+`[2 or 3, session:u32]`. Data is `[session:u32, offset:u32, bytes:1..192]`.
+The 16-byte status is `[protocol=1, state, error, ATT-value-limit, total:u32,
+received:u32, session:u32]`, with states waiting/receiving/verifying/ready/failed
+numbered 1–5. Writes queue one packet; only read-back flash bytes are acknowledged.
+The Go loop owns flash writes and services one queued packet per pass. Its 50 ms
+foreground deadline is active only on the open update screen, not during sleep.
+
+The receiver invalidates and verifies the secondary trailer before image writes,
+checks MCUboot structure/vectors/SHA-256, and leaves activation magic erased until
+local Install. Install leaves `image_ok` erased for a trial. It does not rewrite
+the bootloader, factory recovery, settings, or the running application's slot.
+These integrity checks do not add image authentication or BLE pairing.
 
 ## Download a release
 
@@ -67,7 +124,7 @@ bootstrap images are deliberately excluded. Automated checks do not establish
 device boot, KEEP, wake reliability or battery life. The earlier locally tested
 0.3.4 package recorded below has a different build clock/hash from the CI release.
 
-## Build and update with one command (Linux)
+## Legacy recovery update with one command (Linux)
 
 Install Python 3 with venv support, Git, Go (the version in `go.mod`), TinyGo
 0.42.0, Clang/LLVM (`clang` and `llvm-ar`), and BlueZ's `gatttool`.
@@ -168,17 +225,15 @@ InfiniTime firmware ZIP. It cannot cancel a transfer back into the old goPine
 once its rollback slot has been reused. A direct InfiniTime-to-goPine update
 instead falls back to that preceding InfiniTime image until KEEP.
 
-The stock recovery screen has no on-screen Cancel/Back button. In the current
-UI, completing the hold therefore leaves the normal watch application until another image is
-installed. The bootloader has a separate manual rollback gesture, but it is not
+The stock recovery screen has no on-screen Cancel/Back button. On goPine
+versions through 0.3.12, completing the hold leaves the normal watch application
+until another image is installed. The bootloader has a separate manual rollback gesture, but it is not
 a tested cancellation path in this workflow and cannot restore an image whose
 slot has already been overwritten. This is a prototype UX limitation, not a
 requirement of the OTA file format.
 
-The ordinary build does not advertise Bluetooth. The opt-in BLE candidate
-advertises only during an explicit Sync Time window; firmware uploads still
-require entering recovery and reconnecting to the device advertised by InfiniTime.
-Notifications and a persistent companion connection are not implemented.
+The standalone target does not advertise Bluetooth. BLE builds have explicit
+time/weather/phone windows; 0.3.13 also has the direct-update window above.
 Version 0.2.4 adds a one-shot
 planned-reset clock handoff; unexpected resets still use build time. Both the
 departing and arriving goPine versions must support it, so the first upgrade
@@ -277,7 +332,7 @@ avoid the old DFU receiver's exact-200-byte final-buffer edge case.
 | Primary image / executable vectors | Internal `0x8000` / `0x8020` |
 | Primary slot size / confirm flag | `0x74000` bytes / internal `0x7bfe8` |
 | Swap scratch | Internal `0x7c000..0x7cfff` |
-| Spare (untouched) | Internal `0x7d000..0x7dfff` |
+| goPine bond journal (0.3.15 candidate) | Internal `0x7d000..0x7dfff` |
 | goPine planned-reset clock journal (0.2.4) | Internal `0x7e000..0x7ffff` |
 | Factory recovery | External `0x00000..0x3ffff` |
 | Secondary image | External `0x40000..0xb3fff` |
@@ -559,6 +614,88 @@ Package: `build/ota/gopine-dfu-0.3.4.zip`; SHA-256:
 Host tests, standalone/BLE builds, the resource gate, and BLE port sanitizer
 checks passed. Transfer log: `build/ota/gopine-upload-0.3.4.log`.
 
+### Resource and awake-work optimization (0.3.7)
+
+On 2026-10-09, the host sent all 206,876 bytes through InfiniTime recovery at
+`C9:9E:15:7A:69:B5` using USB adapter hci1 in 2 minutes 20 seconds. Two direct
+connection attempts failed before any transfer. A brief LE discovery on the
+same adapter detected the expected InfiniTime address; the subsequent direct
+connection verified its Legacy DFU service and succeeded. Receiver byte counts
+and final firmware validation passed, and activation/reset was sent. Its
+acknowledgement was unavailable, so no transfer retry followed. The user
+confirmed goPine booted and they tapped KEEP. This establishes installation,
+not a measured battery-life improvement.
+
+Package: `build/ota/gopine-dfu-0.3.7.zip`; SHA-256:
+`fa8b1df9ff1a02e4803452b55ce0076aca440475063e21898855f27b6c1cb76b`.
+Transfer log: `build/ota/upload-0.3.7-20261009-175403-402942.log`.
+See [resource measurements](performance.md) and [power behavior](power.md).
+
+### Phone-feature flash candidate (0.3.12, prepared only)
+
+The 233,084-byte application-only package includes weather, music, opt-in phone
+connections, the Android-compatible notification inbox, draw optimizations and
+updated battery reporting. Host tests, standalone/BLE builds, updater tests,
+BLE sanitizer checks and the exact ELF resource gate pass. See
+[candidate measurements](performance.md#flash-candidate-0312-2026-10-09-not-installed).
+
+Package: `build/ota/gopine-dfu-0.3.12.zip`; SHA-256:
+`ae07551c6dd0484b84cf9e27a88bb1ba753c484f3301e1b4470fb5040dc627f6`.
+The saved target remains recovery `C9:9E:15:7A:69:B5` via USB adapter hci1.
+No transfer or boot/KEEP is established yet. iPhone ANCS/pairing remain absent.
+After installation, confirm KEEP and check the clock, sleep/wake and one timer
+before opting into a ten-minute phone session. Exercise music, weather and
+notification delivery, then turn the phone connection Off for a comparable
+battery baseline. Persistent radio and message vibration change that baseline.
+
+### Direct-update candidate (0.3.13, prepared only)
+
+The 0.3.13 candidate contains all 0.3.12 features plus the in-app receiver and
+Linux direct sender described above. The **244,188-byte** MCUboot image passed
+host tests, both embedded builds and the linked-resource gate. No firmware was
+sent to the watch during preparation or browser preview. The installed version
+remains 0.3.7 until a fresh recovery upload and user-confirmed boot/KEEP.
+
+Package: `build/ota/gopine-dfu-0.3.13.zip`; SHA-256:
+`147e1ec08311278a21f4cb23fd13554e6bdedeaf70473ec63a4d84cbbfbbb60c`.
+Use recovery `C9:9E:15:7A:69:B5` via hci1 for this first installation. Once kept,
+use direct mode at goPine `C9:9E:15:7A:69:B4` for the next candidate. Direct BLE
+transfer and MCUboot rollback still need their first hardware validation.
+
+### Charger-wake upload (0.3.14, boot/KEEP confirmed)
+
+Supersedes the unflashed 0.3.13 candidate with charger start/stop and unplug wake
+screens. The 246,460-byte image passed Go race tests, vet, standalone/BLE builds
+and the resource gate. The earlier 0.3.13 uploader was stopped before sending
+any firmware. On 2026-10-09 the recovery uploader sent all 246,460 bytes of
+0.3.14 via hci1 to `C9:9E:15:7A:69:B5` in 2 minutes 59 seconds. Recovery
+reported successful firmware validation and the host sent activation/reset.
+The final reset acknowledgment was unavailable; no retry was attempted.
+The user confirmed successful boot and tapped KEEP on 2026-10-09. Installed
+firmware is now 0.3.14.
+
+Package: `build/ota/gopine-dfu-0.3.14.zip`; SHA-256:
+`1dee149fff8861e1ab15e50d7fd2603dc7f157c60559706d2d056d1cbb4b60fa`.
+This initial upload used recovery via hci1. Real charger edges and a subsequent
+in-app update still need hardware verification.
+
+### Local 0.3.15 — direct transfer verified; boot/KEEP pending
+
+The earlier local `gopine-dfu-0.3.15.zip` contained a 277,132-byte image with the connected
+shutdown fix, passkey pairing/bond storage and saved flipped-screen option.
+SHA-256: `4f311e91f91a1149320e03f228afaf5bf67eecaec797b426e1efbbe360fd6637`.
+Host tests and resource gates pass. On 2026-10-09 the in-goPine uploader reached
+277,132/277,132 bytes and the watch verified the image. The first service-discovery
+attempt disconnected before data; the sender reconnected and completed the full
+transfer. Log: `build/ota/upload-0.3.15-20261009-203113-475386.log`.
+The user has been asked to tap Install and then KEEP; boot/KEEP confirmation is
+pending, so the last confirmed installed version is still 0.3.14. Follow
+[InfiniLink acceptance](pairing.md) after confirmation.
+
+The published release is rebuilt from its tagged source commit. Its package
+checksum is recorded in the release assets; the local checksum above identifies
+only the earlier hardware-transfer test.
+
 <!-- recovery-reference -->
 ## Recovery reference: red, green and blue
 
@@ -580,8 +717,9 @@ possible backlight flashes and automatic restart to finish with the button
 released. Do not interrupt an active restore or firmware transfer.
 
 **Blue is not a guaranteed way back to the previous goPine.** It can only use
-what remains in the secondary slot. goPine updates run through recovery, so the
-fallback is normally recovery. Red recovery and new uploads reuse that slot;
+what remains in the secondary slot. Legacy goPine updates run through recovery, so their
+fallback is normally recovery. Direct updates from 0.3.13 retain the preceding
+goPine as the trial fallback until that slot is reused. Red recovery and new uploads reuse that slot;
 an overwritten goPine image cannot be recovered with blue. The blue gesture is
 documented upstream but has not been validated as a cancel path on this watch.
 

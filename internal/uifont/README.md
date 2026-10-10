@@ -50,3 +50,10 @@ Use `--regular` and `--bold` to supply the same TTF files from another location.
 The generator verifies their SHA-256 hashes. Font attribution and redistribution
 terms are in LICENSE.txt. The runtime reader is goPine code; only the glyph data
 is derived from the fonts.
+
+The 0.3.10 drawing path measures text directly from glyph metrics, without
+parsing glyph bitmap packets or changing the reusable glyph. Text rendering
+builds one sixteen-color antialiasing palette per line and reuses it across its
+glyphs. The palette stays on the stack; font tables, coverage, glyph advances,
+multiline behavior and unsupported-character fallback are unchanged. Generic
+TinyFont fonts keep their normal measurement/drawing fallback.

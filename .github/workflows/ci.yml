@@ -16,6 +16,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
       - name: Install SDL2
         run: sudo apt-get update && sudo apt-get install --yes libsdl2-dev
       - name: Test
@@ -28,8 +32,14 @@ jobs:
         run: python3 scripts/test_check_resources.py
       - name: Test OTA updater without Bluetooth
         run: python3 scripts/test_ota_update.py
+      - name: Test direct Bluetooth sender without a watch
+        run: python3 scripts/test_direct_upload.py
       - name: Test release assets
         run: python3 scripts/test_release_assets.py
+      - name: Test browser updater and published release selection
+        run: |
+          node --test web/*.test.mjs
+          python3 scripts/test_build_web.py
       - name: Check module files
         run: go mod tidy -diff
       - name: Build simulator

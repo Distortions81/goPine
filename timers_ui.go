@@ -8,6 +8,8 @@ import (
 	"tinygo.org/x/tinyfont"
 )
 
+const timerValueBaseline = 102
+
 func repeatLabel(r alarmRepeat) string {
 	switch r {
 	case alarmOnce:
@@ -87,12 +89,18 @@ func (u *watchUI) handleTimerTap(e inputEvent, now time.Time) {
 	switch u.page {
 	case pageApps:
 		switch {
-		case inRect(e, 16, 48, 224, 96):
+		case inRect(e, 150, 0, 240, 42):
+			u.openInbox()
+		case inRect(e, 16, 42, 224, 82):
 			u.page = pageAlarms
-		case inRect(e, 16, 104, 224, 152):
+		case inRect(e, 16, 88, 224, 128):
 			u.page = pageStopwatch
-		case inRect(e, 16, 160, 224, 208):
+		case inRect(e, 16, 134, 224, 174):
 			u.page = pageCountdown
+		case inRect(e, 12, 180, 114, 220):
+			u.openWeather()
+		case inRect(e, 126, 180, 228, 220):
+			u.openMusic()
 		}
 	case pageAlarms:
 		a := &t.alarms[u.alarmIndex]
@@ -184,10 +192,13 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 	t := &u.timers
 	switch u.page {
 	case pageApps:
-		centered(d, &uifont.Bold18, 29, "CLOCK TOOLS", white)
-		clockControl(d, 16, 48, 208, 48, "ALARMS", card)
-		clockControl(d, 16, 104, 208, 48, "STOPWATCH", card)
-		clockControl(d, 16, 160, 208, 48, "COUNTDOWN", card)
+		writeLine(d, &uifont.Bold18, 60, 29, "APPS", white)
+		writeLine(d, &uifont.Regular18, 166, 29, "INBOX", accent)
+		clockControl(d, 16, 42, 208, 40, "ALARMS", card)
+		clockControl(d, 16, 88, 208, 40, "STOPWATCH", card)
+		clockControl(d, 16, 134, 208, 40, "COUNTDOWN", card)
+		clockControl(d, 12, 180, 102, 40, "WEATHER", card)
+		clockControl(d, 126, 180, 102, 40, "MUSIC", card)
 	case pageAlarms:
 		a := t.alarms[u.alarmIndex]
 		centered(d, &uifont.Bold18, 29, "ALARMS", white)
@@ -222,7 +233,7 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 		clockControl(d, 126, 188, 102, 44, "SAVE", positive)
 	case pageStopwatch:
 		centered(d, &uifont.Bold18, 29, "STOPWATCH", white)
-		drawDuration(d, &uifont.Bold24, 102, t.watch.elapsed(now), true, "", white)
+		drawDuration(d, &uifont.Bold24, timerValueBaseline, t.watch.elapsed(now), true, "", white)
 		if t.watch.lap > 0 {
 			drawDuration(d, &uifont.Regular18, 140, t.watch.lap, true, "LAP ", muted)
 		}
@@ -238,7 +249,7 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 		centered(d, &uifont.Bold18, 29, "COUNTDOWN", white)
 		// Round up so the display never says zero while time is still left.
 		left := t.countdown.left(now)
-		drawDuration(d, &uifont.Bold24, 102, (left+time.Second-1)/time.Second*time.Second, false, "", white)
+		drawDuration(d, &uifont.Bold24, timerValueBaseline, (left+time.Second-1)/time.Second*time.Second, false, "", white)
 		label := "SET DURATION"
 		if t.countdown.running {
 			label = "RUNNING"
@@ -259,10 +270,10 @@ func (u *watchUI) drawTimers(d canvas, now time.Time) {
 			clockControl(d, x, 48, 64, 44, "+", card)
 			clockControl(d, x, 136, 64, 44, "-", card)
 			label := twoDigits(v)
-			w, _ := tinyfont.LineWidth(&uifont.Bold24, label)
+			w, _ := lineWidth(&uifont.Bold24, label)
 			writeLine(d, &uifont.Bold24, x+(64-int16(w))/2, 114, label, white)
 			label = []string{"HR", "MIN", "SEC"}[i]
-			w, _ = tinyfont.LineWidth(&uifont.Regular18, label)
+			w, _ = lineWidth(&uifont.Regular18, label)
 			writeLine(d, &uifont.Regular18, x+(64-int16(w))/2, 132, label, muted)
 		}
 		clockControl(d, 12, 188, 102, 44, "CANCEL", card)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/Distortions81/goPine/internal/uifont"
 	"image/color"
 	"strings"
 
@@ -13,6 +14,10 @@ import (
 // rasterized again for each of the fifteen strips, delaying touch processing.
 func writeLine(d drivers.Displayer, font tinyfont.Fonter, x, y int16, text string, c color.RGBA) {
 	if !textVisible(d, font, y, text) {
+		return
+	}
+	if fast, ok := font.(*uifont.Font); ok {
+		fast.DrawText(d, x, y, text, c)
 		return
 	}
 	x0 := x
@@ -38,4 +43,11 @@ func textVisible(d drivers.Displayer, font tinyfont.Fonter, y int16, text string
 	_, top, _, bottom := clip.ClipBounds()
 	lo, hi := bounds.VerticalBounds()
 	return int(y)+int(lo) < bottom && int(y)+int(hi) > top
+}
+
+func lineWidth(font tinyfont.Fonter, text string) (uint32, uint32) {
+	if fast, ok := font.(*uifont.Font); ok {
+		return fast.LineWidth(text)
+	}
+	return tinyfont.LineWidth(font, text)
 }

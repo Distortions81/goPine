@@ -45,7 +45,16 @@ def prepare(args):
         raise ValueError('Version must be major.minor.revision[+build]')
     if sys.platform != 'linux' or not shutil.which('gatttool'):
         raise ValueError('Linux with BlueZ gatttool is required (install the bluez package)')
+    direct = getattr(args, 'direct', False)
     saved = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+    if direct:
+        import bleak  # Fail before the watch is put into update mode.
+        saved = dict(saved)
+        # Firmware uses the recovery identity with the low address byte flipped.
+        if saved.get('address'):
+            parts = saved['address'].split(':')
+            parts[-1] = f'{int(parts[-1], 16) ^ 1:02X}'
+            saved['address'] = ':'.join(parts)
     target = target_config(args.address, args.adapter, saved)
     if not pathlib.Path('/sys/class/bluetooth', target['adapter']).exists():
         raise ValueError(f"Bluetooth adapter {target['adapter']} is missing")
@@ -72,23 +81,26 @@ def prepare(args):
     if hashlib.sha256(data).hexdigest() != digest:
         raise ValueError('Package changed during preparation')
     prepared.write_bytes(data)
-    CONFIG.write_text(json.dumps(target, indent=2)+'\n')
+    if not direct:
+        CONFIG.write_text(json.dumps(target, indent=2)+'\n')
     print(f"Ready: {version}, {len(image):,} bytes, SHA-256 {digest}", flush=True)
     print(f"Target: {target['address']} via {target['adapter']}", flush=True)
-    return UploadJob(prepared, digest, version, target)
+    return UploadJob(prepared, digest, version, target, direct=direct)
 
 
 class UploadJob:
-    def __init__(self, package, digest, version, target):
+    def __init__(self, package, digest, version, target, direct=False):
         self.package, self.digest, self.version, self.target = package, digest, version, target
         self.lock = threading.Lock()
         self.state, self.progress, self.logs = 'ready', 0, []
         self.worker = None
+        self.direct = direct
+        self.session = secrets.randbelow(0xffffffff) + 1
 
     def snapshot(self):
         with self.lock:
             return dict(state=self.state, progress=self.progress, logs=list(self.logs),
-                        version=self.version, sha256=self.digest, **self.target)
+                        version=self.version, sha256=self.digest, direct=self.direct, **self.target)
 
     def append(self, line):
         print(line, flush=True)
@@ -110,7 +122,7 @@ class UploadJob:
 
     def confirm(self):
         with self.lock:
-            if self.state != 'awaiting_keep':
+            if self.state not in ('awaiting_keep', 'awaiting_install'):
                 return False
             self.state = 'confirmed'
             return True
@@ -125,9 +137,12 @@ class UploadJob:
                 logpath = OUTPUT / f'upload-{self.version}-{stamp}.log'
                 with logpath.open('w') as log:
                     log.write(f'{self.version} {self.digest} {self.target}\n')
-                    command = [sys.executable, '-u', str(ROOT/'scripts/ota_upload.py'),
+                    sender = 'direct_upload.py' if self.direct else 'ota_upload.py'
+                    command = [sys.executable, '-u', str(ROOT/'scripts'/sender),
                                '--package', str(self.package), '--sha256', self.digest,
                                '--adapter', self.target['adapter'], '--address', self.target['address']]
+                    if self.direct:
+                        command += ['--session', str(self.session)]
                     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                           stdin=subprocess.DEVNULL, text=True) as process:
                         for line in process.stdout:
@@ -137,7 +152,7 @@ class UploadJob:
         except Exception as error:
             self.append(f'Updater stopped: {error}')
         with self.lock:
-            self.state = {0: 'awaiting_keep', 3: 'awaiting_keep', 1: 'connection_failed'}.get(result, 'failed')
+            self.state = {0: 'awaiting_install' if self.direct else 'awaiting_keep', 3: 'awaiting_keep', 1: 'connection_failed'}.get(result, 'failed')
 
 
 def make_server(job, port):
@@ -190,7 +205,7 @@ def make_server(job, port):
 
 def serve(job, port):
     server = make_server(job, port)
-    print(f'Open http://127.0.0.1:{server.server_port} — build is ready; enter recovery only when the page asks.', flush=True)
+    print(f'Open http://127.0.0.1:{server.server_port} — build is ready; follow the page to connect your watch.', flush=True)
     try:
         server.serve_forever()
     finally:
@@ -207,6 +222,7 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--ready', action='store_true', help='Recovery already ready: upload immediately after preparation')
     parser.add_argument('--prepare-only', action='store_true', help='Build and validate, then exit without connecting')
+    parser.add_argument('--direct', action='store_true', help='Update within goPine 0.3.13 or later; recovery is not used')
     args = parser.parse_args()
     job = prepare(args)
     if args.prepare_only:
@@ -215,14 +231,14 @@ def main():
         serve(job, args.port)
         return 0
     if not args.ready:
-        input('NOW open Firmware update on the watch, enter recovery, then press Enter to upload immediately. ')
+        input('Open Firmware update on goPine and hold to connect, then press Enter. ' if args.direct else 'NOW open Firmware update on the watch, enter recovery, then press Enter to upload immediately. ')
     job.start()
     job.worker.join()
     state = job.snapshot()['state']
-    if state == 'awaiting_keep':
-        print('Check the watch and tap KEEP. Upload validation does not prove successful boot.')
+    if state in ('awaiting_keep', 'awaiting_install'):
+        print('Tap INSTALL on the watch, then KEEP after reboot.' if args.direct else 'Check the watch and tap KEEP. Upload validation does not prove successful boot.')
         return 0
-    print('Restart recovery before retrying. No automatic transfer retry.')
+    print('Read the watch message and use Retry on its update screen.' if args.direct else 'Restart recovery before retrying. No automatic transfer retry.')
     return 1
 
 

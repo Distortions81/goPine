@@ -51,3 +51,16 @@ type contextError struct {
 func (e *contextError) Error() string             { return e.context + ": " + e.cause.Error() }
 func (e *contextError) Unwrap() error             { return e.cause }
 func wrapError(context string, cause error) error { return &contextError{context, cause} }
+
+func syncTimeDigits(t time.Time) [8]byte {
+	h, m, s := t.Clock()
+	return [8]byte{byte('0' + h/10), byte('0' + h%10), ':', byte('0' + m/10), byte('0' + m%10), ':', byte('0' + s/10), byte('0' + s%10)}
+}
+
+func syncDateDigits(t time.Time) (text [11]byte) {
+	const months = "JanFebMarAprMayJunJulAugSepOctNovDec"
+	y, m, d := t.Date()
+	i := (int(m) - 1) * 3
+	text = [11]byte{byte('0' + d/10), byte('0' + d%10), ' ', months[i], months[i+1], months[i+2], ' ', byte('0' + y/1000%10), byte('0' + y/100%10), byte('0' + y/10%10), byte('0' + y%10)}
+	return
+}

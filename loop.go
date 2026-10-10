@@ -10,6 +10,7 @@ type watchLoop struct {
 	ui       *watchUI
 	sync     *timeSyncController
 	renderer *frameRenderer
+	updater  *directUpdater
 	now      func() time.Time
 	state    func() updateState
 	action   func(uiAction)
@@ -20,6 +21,7 @@ func (l *watchLoop) run() error {
 	defer l.display.SetVibration(false)
 	var previous frameKey
 	painted, awake := false, true
+	flipped := false
 	power := l.display.PowerStatus()
 	nextPower := l.now().Add(powerPollInterval)
 	l.display.SetTouchWake(l.ui.touchWake)
@@ -48,11 +50,20 @@ func (l *watchLoop) run() error {
 				return err
 			}
 		}
+		if l.updater != nil {
+			l.updater.tick(l.ui, now, power)
+		}
 		l.sync.update(l.ui, now, power.Percent)
-		if l.ui.sync.Open || l.ui.timers.active {
+		if l.sync.updatePairing(l.ui) {
+			if err := wakeAlert(); err != nil {
+				return err
+			}
+		}
+		if l.ui.pairingVisible() || l.ui.sync.Open || l.ui.timers.active || (l.ui.weather != nil && l.ui.weather.open) || (l.ui.page == pageTransfer && l.ui.transfer != nil && l.ui.transfer.open) {
 			l.display.KeepAwake()
 		}
-		l.display.SetVibration(l.ui.timers.vibrating(now))
+		notificationBuzz := l.ui.notificationVibrating(now)
+		l.display.SetVibration(l.ui.timers.vibrating(now) || notificationBuzz)
 		l.display.SetTouchWake(l.ui.touchWake)
 		// Capture the deadline before rendering. A frame that crosses a minute
 		// or alert boundary must service that deadline immediately afterward.
@@ -63,10 +74,22 @@ func (l *watchLoop) run() error {
 			}
 		}
 		if awake {
+			if flipped != l.ui.flipScreen {
+				if err := l.display.SetFlipped(l.ui.flipScreen); err != nil {
+					return wrapError("rotate display", err)
+				}
+				flipped = l.ui.flipScreen
+				painted = false
+				l.renderer.invalidate()
+			}
 			key := l.ui.frameKey(now, power)
 			if !painted || key != previous {
 				frameTime = now
-				if err := l.renderer.render(l.display, drawFrame); err != nil {
+				mask := allStrips
+				if painted {
+					mask = changedStrips(&previous, &key)
+				}
+				if err := l.renderer.renderStrips(l.display, drawFrame, mask); err != nil {
 					return wrapError("refresh display", err)
 				}
 				previous, painted = key, true
@@ -76,10 +99,18 @@ func (l *watchLoop) run() error {
 		if err != nil {
 			return wrapError("wait for display", err)
 		}
+		event = orientInput(event, flipped)
 		if event.Kind == inputQuit {
 			return nil
 		}
 		now = l.now()
+		if event.Kind == inputPower {
+			if err := wakeAlert(); err != nil {
+				return err
+			}
+			l.ui.showPowerNotice()
+			event = inputEvent{Kind: inputRefresh}
+		}
 		if event.Kind == inputSleep {
 			awake = false
 		}

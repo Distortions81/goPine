@@ -20,7 +20,9 @@ type desktopDisplay struct {
 	pointerX, pointerY int16
 	asleep             bool
 	touchWake          bool
+	flipped            bool
 	vibrating          bool
+	chargeState        chargeState
 }
 
 func openDisplay() (clockDisplay, error) {
@@ -53,7 +55,7 @@ func openDisplay() (clockDisplay, error) {
 		return nil, err
 	}
 
-	return &desktopDisplay{window: window, surface: surface}, nil
+	return &desktopDisplay{window: window, surface: surface, chargeState: chargeExternalPower}, nil
 }
 
 func (d *desktopDisplay) Size() (int16, int16) {
@@ -63,6 +65,9 @@ func (d *desktopDisplay) Size() (int16, int16) {
 func (d *desktopDisplay) SetPixel(x, y int16, c color.RGBA) {
 	if x < 0 || y < 0 || int32(x) >= d.surface.W || int32(y) >= d.surface.H {
 		return
+	}
+	if d.flipped {
+		x, y = 239-x, 239-y
 	}
 	if c.A != 255 {
 		c = gfx.Over(color.RGBAModel.Convert(d.surface.At(int(x), int(y))).(color.RGBA), c)
@@ -83,6 +88,9 @@ func (d *desktopDisplay) FillRectangle(x, y, width, height int16, c color.RGBA) 
 			}
 		}
 		return nil
+	}
+	if d.flipped {
+		x, y = 240-x-width, 240-y-height
 	}
 	return d.surface.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(width), H: int32(height)}, sdl.MapRGBA(d.surface.Format, c.R, c.G, c.B, c.A))
 }
@@ -112,7 +120,7 @@ func (d *desktopDisplay) Display() error {
 }
 
 func (d *desktopDisplay) PowerStatus() powerStatus {
-	return powerStatus{Percent: 100, State: chargeExternalPower}
+	return powerStatus{Percent: 100, State: d.chargeState}
 }
 
 func (d *desktopDisplay) Wake() error {
@@ -143,6 +151,10 @@ func (d *desktopDisplay) Wait(duration time.Duration) (inputEvent, error) {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			switch e := event.(type) {
 			case *sdl.KeyboardEvent:
+				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && e.Keysym.Sym == sdl.K_c {
+					d.chargeState = (d.chargeState + 1) % 3
+					return inputEvent{Kind: inputPower}, nil
+				}
 				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && e.Keysym.Sym == sdl.K_SPACE {
 					d.pointerDown = false
 					d.touch.cancelContact()
@@ -205,4 +217,11 @@ func (d *desktopDisplay) Close() error {
 	sdl.Quit()
 	runtime.UnlockOSThread()
 	return err
+}
+
+func (d *desktopDisplay) SetFlipped(flipped bool) error {
+	d.flipped = flipped
+	d.pointerDown = false
+	d.touch.cancelContact()
+	return nil
 }

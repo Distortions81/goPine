@@ -15,6 +15,9 @@ class ResourceChecks(unittest.TestCase):
                  "main.openApplication$3", "main.openApplication"]
         symbols = {name: 0x8000 + 32 * i for i, name in enumerate(names)}
         frames = dict(zip(symbols.values(), [48, 104, 2256, 1088, 1032, 1328, 752, 664, 1976]))
+        symbols[resources.PORT_ISR] = 0xa000
+        frames[0xa000] = 40
+        symbols[resources.INPUT_VECTORS] = 0x20001000
         symbols.update(_heap_start=0x20005AC0, _heap_end=0x20010000)
         return symbols, frames
 
@@ -32,6 +35,20 @@ class ResourceChecks(unittest.TestCase):
         self.assertTrue(any("main.run" in error for error in result["errors"]))
         self.assertTrue(any("settings_save" in error for error in result["errors"]))
 
+    def test_input_vector_and_interrupt_stack(self):
+        symbols, frames = self.fixture()
+        symbols[resources.INPUT_VECTORS] += 4
+        frames[symbols[resources.PORT_ISR]] = 512
+        errors = resources.audit(symbols, frames, 8192)["errors"]
+        self.assertTrue(any("aligned" in error for error in errors))
+        self.assertTrue(any("interrupt frame" in error for error in errors))
+
+    def test_missing_port_handler_fails_closed(self):
+        symbols, frames = self.fixture()
+        del symbols[resources.PORT_ISR]
+        with self.assertRaises(ValueError):
+            resources.audit(symbols, frames, 8192)
+
     def test_stack_increase_is_not_a_silent_fix(self):
         symbols, frames = self.fixture()
         self.assertTrue(resources.audit(symbols, frames, 16384)["errors"])
@@ -41,8 +58,36 @@ class ResourceChecks(unittest.TestCase):
         symbols["_heap_start"] += 4096
         self.assertTrue(resources.audit(symbols, frames, 8192)["errors"])
 
+    def test_phone_stack_growth_fails(self):
+        symbols, frames = self.fixture()
+        symbols["(*main.timeSyncController).updatePhone"] = 0x9000
+        frames[0x9000] = 4096
+        errors = resources.audit(symbols, frames, 8192)["errors"]
+        self.assertTrue(any("phone_update" in error for error in errors))
+
+    def test_weather_stack_growth_fails(self):
+        symbols, frames = self.fixture()
+        symbols["(*main.timeSyncController).updateWeather"] = 0x9000
+        frames[0x9000] = 4096
+        errors = resources.audit(symbols, frames, 8192)["errors"]
+        self.assertTrue(any("weather_update" in error for error in errors))
+
+    def test_notification_stack_growth_fails(self):
+        symbols, frames = self.fixture()
+        symbols["(*main.watchUI).receiveNotifications"] = 0x9000
+        frames[0x9000] = 4096
+        errors = resources.audit(symbols, frames, 8192)["errors"]
+        self.assertTrue(any("notification_update" in error for error in errors))
+
+    def test_direct_update_stack_growth_fails(self):
+        symbols, frames = self.fixture()
+        symbols["(*main.directUpdater).tick"] = 0x9000
+        frames[0x9000] = 4096
+        self.assertTrue(any("direct_update" in error for error in resources.audit(symbols,frames,8192)["errors"]))
+
     def test_large_dependencies_cannot_silently_return(self):
-        for name in ("fmt.Sprintf", "(*fmt.pp).printValue", "crypto/internal/fips140.CAST"):
+        for name in ("fmt.Sprintf", "(*fmt.pp).printValue", "crypto/internal/fips140.CAST",
+                     "hash/crc32.ChecksumIEEE", "(time.Time).Format"):
             symbols, frames = self.fixture()
             symbols[name] = 0x9000
             self.assertTrue(resources.audit(symbols, frames, 8192)["errors"], name)

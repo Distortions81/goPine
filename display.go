@@ -23,6 +23,7 @@ type clockDisplay interface {
 	Wake() error
 	KeepAwake()
 	SetTouchWake(bool)
+	SetFlipped(bool) error
 	SetVibration(bool)
 	Close() error
 }
@@ -41,6 +42,7 @@ const (
 	inputSwipeLeft
 	inputSwipeRight
 	inputSleep
+	inputPower
 )
 
 type inputEvent struct {

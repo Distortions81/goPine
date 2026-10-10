@@ -12,6 +12,14 @@ checks availability before connecting. See [Chrome's Web Bluetooth
 documentation](https://developer.chrome.com/docs/capabilities/bluetooth) for
 platform requirements, including Linux configuration.
 
+On **Linux Chrome**, if a ZIP shows **Checked** but the button says **Bluetooth
+unavailable**, open `chrome://flags/#enable-experimental-web-platform-features`,
+set **Experimental Web Platform features** to **Enabled**, and relaunch Chrome.
+Then reopen the updater and choose the firmware again. The page provides a
+**Copy Linux setup address** button and links to Chrome's guide beside the
+connection control. This setting exposes the Bluetooth API; it does not choose
+or connect to a watch automatically.
+
 1. Select the published firmware offered on the page, or choose an application
    DFU ZIP downloaded or built from this project.
 2. Disconnect phone companion apps, keep the watch nearby, and open **Settings →

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"image/color"
 	"testing"
+	"tinygo.org/x/tinyfont"
 )
 
 type glyphCanvas struct{ partial, opaque, calls int }
@@ -147,4 +148,28 @@ func fontRunes(f *Font) []rune {
 		chars = append(chars, r)
 	}
 	return chars
+}
+
+func TestFastMetricsMatchTinyFont(t *testing.T) {
+	for _, f := range []*Font{&Regular18, &Bold18, &Bold24, &Meridiem, &Clock} {
+		for n := 0; n < 500; n++ {
+			data := make([]byte, n%41)
+			for i := range data {
+				data[i] = byte(32 + (n*17+i*37)%96)
+			}
+			text := string(data)
+			if n%17 == 0 {
+				text += "\u2603\r\n"
+			}
+			inner, outer := tinyfont.LineWidth(f, text)
+			want := f.GetGlyph('0').Info()
+			a, b := f.LineWidth(text)
+			if a != inner || b != outer {
+				t.Fatalf("metrics changed for %q: %d,%d != %d,%d", text, a, b, inner, outer)
+			}
+			if f.glyph.Info() != want {
+				t.Fatal("measurement changed reusable glyph")
+			}
+		}
+	}
 }

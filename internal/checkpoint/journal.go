@@ -6,7 +6,8 @@ package checkpoint
 import (
 	"encoding/binary"
 	"errors"
-	"hash/crc32"
+
+	"github.com/Distortions81/goPine/internal/ieeecrc"
 )
 
 const (
@@ -49,6 +50,7 @@ type Settings struct {
 	Alarms           [5]Alarm
 	CountdownSeconds uint32
 	TouchWake        bool
+	FlipScreen       bool
 }
 
 // Runtime timestamps are local calendar fields encoded as Unix milliseconds,
@@ -144,7 +146,7 @@ func versionHeader(magic uint32) [headerSize]byte {
 	var b [headerSize]byte
 	binary.LittleEndian.PutUint32(b[:4], magic)
 	binary.LittleEndian.PutUint32(b[4:8], Size)
-	binary.LittleEndian.PutUint32(b[8:12], crc32.ChecksumIEEE(b[:8]))
+	binary.LittleEndian.PutUint32(b[8:12], ieeecrc.Checksum(b[:8]))
 	binary.LittleEndian.PutUint32(b[12:], headerCommit)
 	return b
 }
@@ -210,11 +212,10 @@ func Open(f Flash) (*Journal, error) {
 		// The v2 record size leaves a short unused tail; it still belongs to the
 		// arena and must be checked before treating unowned storage as blank.
 		used := headerSize + (PageSize-headerSize)/size*size
-		var tail [RecordSize]byte
-		if err := read(f, tail[:PageSize-used], int64(page*PageSize+used)); err != nil {
+		if err := read(f, b[:PageSize-used], int64(page*PageSize+used)); err != nil {
 			return nil, err
 		}
-		if !erased(tail[:PageSize-used]) {
+		if !erased(b[:PageSize-used]) {
 			j.blank[page], partial = false, false
 		}
 	}
@@ -285,7 +286,10 @@ func encode(r Record) [RecordSize]byte {
 	if r.Settings.TouchWake {
 		b[144] = 1
 	}
-	binary.LittleEndian.PutUint32(b[RecordSize-8:RecordSize-4], crc32.ChecksumIEEE(b[:RecordSize-8]))
+	if r.Settings.FlipScreen {
+		b[145] = 1
+	}
+	binary.LittleEndian.PutUint32(b[RecordSize-8:RecordSize-4], ieeecrc.Checksum(b[:RecordSize-8]))
 	binary.LittleEndian.PutUint32(b[RecordSize-4:], recordCommit)
 	return b
 }
@@ -297,7 +301,7 @@ func decode(b *[RecordSize]byte) (Record, bool) {
 	r := Record{Hours: packed & 0xfffff, Sequence: binary.LittleEndian.Uint32(b[4:8]), Use24: packed&(1<<20) != 0,
 		HasTime: packed&(1<<21) != 0, HasSettings: packed&(1<<22) != 0, HasRuntime: packed&(1<<23) != 0}
 	r.Settings.CountdownSeconds = binary.LittleEndian.Uint32(b[8:12])
-	valid := binary.LittleEndian.Uint32(b[RecordSize-4:]) == recordCommit && binary.LittleEndian.Uint32(b[RecordSize-8:RecordSize-4]) == crc32.ChecksumIEEE(b[:RecordSize-8]) && packed>>24 == 0 && r.Hours < MaxHours
+	valid := binary.LittleEndian.Uint32(b[RecordSize-4:]) == recordCommit && binary.LittleEndian.Uint32(b[RecordSize-8:RecordSize-4]) == ieeecrc.Checksum(b[:RecordSize-8]) && packed>>24 == 0 && r.Hours < MaxHours
 	for i := range r.Settings.Alarms {
 		off := 12 + i*4
 		r.Settings.Alarms[i] = Alarm{b[off], b[off+1], b[off+2], b[off+3] == 1}
@@ -316,8 +320,9 @@ func decode(b *[RecordSize]byte) (Record, bool) {
 	}
 	r.Runtime.AlertMillis = binary.LittleEndian.Uint32(b[140:144])
 	r.Settings.TouchWake = b[144] == 1
-	valid = valid && b[60]>>4 == 0 && b[144] <= 1
-	for _, v := range b[145 : RecordSize-8] {
+	r.Settings.FlipScreen = b[145] == 1
+	valid = valid && b[60]>>4 == 0 && b[144] <= 1 && b[145] <= 1
+	for _, v := range b[146 : RecordSize-8] {
 		valid = valid && v == 0
 	}
 	valid = valid && (!r.HasSettings || r.Settings.valid()) && (!r.HasRuntime || (r.HasSettings && r.Runtime.valid()))
@@ -327,7 +332,7 @@ func decode(b *[RecordSize]byte) (Record, bool) {
 func decodeLegacy(b []byte) (Record, bool) {
 	packed := binary.LittleEndian.Uint32(b[:4])
 	r := Record{Hours: packed & 0xfffff, Sequence: binary.LittleEndian.Uint32(b[4:8]), Use24: packed&(1<<20) != 0, HasTime: true}
-	return r, binary.LittleEndian.Uint32(b[12:]) == recordCommit && binary.LittleEndian.Uint32(b[8:12]) == crc32.ChecksumIEEE(b[:8]) && packed>>21 == 0 && r.Hours < MaxHours
+	return r, binary.LittleEndian.Uint32(b[12:]) == recordCommit && binary.LittleEndian.Uint32(b[8:12]) == ieeecrc.Checksum(b[:8]) && packed>>21 == 0 && r.Hours < MaxHours
 }
 
 // Save skips an identical hour/format, assigning sequence independently of
@@ -396,12 +401,13 @@ func (j *Journal) save(r Record) error {
 	} else if j.legacy[page] {
 		page, slot = 1-page, 0
 	}
+	// Reuse the scan buffer for readback, including interrupted-record skips.
+	var check [RecordSize]byte
 	for j.owned[page] && !j.legacy[page] && slot < slots {
-		var b [RecordSize]byte
-		if err := read(j.flash, b[:], recordOffset(page, slot)); err != nil {
+		if err := read(j.flash, check[:], recordOffset(page, slot)); err != nil {
 			return err
 		}
-		if erased(b[:]) {
+		if erased(check[:]) {
 			break
 		}
 		slot++ // Skip interrupted records; never program over them.
@@ -444,7 +450,6 @@ func (j *Journal) save(r Record) error {
 	if err := write(j.flash, b[RecordSize-4:], off+RecordSize-4); err != nil {
 		return err
 	}
-	var check [RecordSize]byte
 	if err := read(j.flash, check[:], off); err != nil {
 		return err
 	}

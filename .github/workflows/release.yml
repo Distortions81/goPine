@@ -31,6 +31,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
       - uses: acifani/setup-tinygo@v3
         with:
           tinygo-version: '0.42.0'
@@ -51,7 +55,10 @@ jobs:
           python3 scripts/test_sync_time.py
           python3 scripts/test_check_resources.py
           python3 scripts/test_ota_update.py
+          python3 scripts/test_direct_upload.py
           python3 scripts/test_release_assets.py
+          python3 scripts/test_build_web.py
+          node --test web/*.test.mjs
           python3 scripts/test-ble-port.py --infinitime build/deps/InfiniTime
       - name: Initialize TinyGo libc headers
         run: tinygo build -target=./targets/pinetime-gopine.json -o build/toolchain-check.elf .

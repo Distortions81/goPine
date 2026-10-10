@@ -40,6 +40,12 @@ sudo apt install libsdl2-dev
 
 ## PineTime firmware
 
+Use the [browser updater](https://distortions81.github.io/goPineTime/) to send
+firmware directly over Bluetooth from a supported browser. It works with goPine
+0.3.13 or newer already on the watch, validates the firmware ZIP, resumes interrupted
+transfers, and waits for on-watch **INSTALL** and **KEEP**. See the
+[browser updater guide](docs/web-updater.md) for compatibility and local builds.
+
 For **Bluetooth OTA with on-watch confirmation**, see [OTA setup](docs/ota.md).
 Download the firmware ZIP from [GitHub Releases](https://github.com/Distortions81/goPineTime/releases)
 to update without compiling. Releases are built and checked automatically from

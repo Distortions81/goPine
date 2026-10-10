@@ -1,0 +1,101 @@
+# Browser firmware updater
+
+The [goPine browser updater](https://distortions81.github.io/goPineTime/) transfers
+firmware directly from a supported browser to the watch. It needs **goPine 0.3.13
+or newer already on the watch**, with its in-app Firmware Update screen. InfiniTime
+recovery and earlier goPine builds use the [existing recovery updater](ota.md).
+
+Open the page over HTTPS in a browser that provides Web Bluetooth, such as Chrome
+or Edge on a supported desktop or Android device. Browser support varies by
+operating system; ordinary Safari on iPhone does not provide this API. The page
+checks availability before connecting. See [Chrome's Web Bluetooth
+documentation](https://developer.chrome.com/docs/capabilities/bluetooth) for
+platform requirements, including Linux configuration.
+
+1. Select the published firmware offered on the page, or choose an application
+   DFU ZIP downloaded or built from this project.
+2. Disconnect phone companion apps, keep the watch nearby, and open **Settings →
+   Firmware Update** on the watch. Hold the on-watch control until it is ready
+   to connect. Stay in goPine; this flow does not use the recovery clock.
+3. Use the page's connect control and choose **goPine Update** from the browser's
+   Bluetooth chooser. Keep the page open and visible during transfer.
+4. Wait for the watch to finish verification. Tap **INSTALL** on the watch,
+   then **KEEP** after the new firmware boots.
+
+Progress counts bytes acknowledged by the watch. If the connection drops, keep
+the page open and reconnect to resume the same transfer. Reloading or closing
+the page loses its transfer session; use Cancel/Retry on the watch before starting
+a new session. Stopping the browser transfer does not install firmware. Installation
+and KEEP remain physical watch actions, and the page cannot confirm a successful
+boot on its own.
+
+The page validates the application package, image hash, link addresses and size
+before transfer. The watch also validates the completed image before offering
+INSTALL. These checks detect corruption and incompatible package layouts; they
+do not turn arbitrary downloaded files into authenticated releases.
+
+## Hosting and release updates
+
+The `Browser updater` workflow builds the static `web/` directory and deploys it
+with GitHub Pages. In repository **Settings → Pages**, set **Source** to **GitHub
+Actions**. See [GitHub's Pages workflow
+documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
+The workflow runs after website changes on `main`, a manual dispatch, published
+releases, and successful `OTA release` runs. The last trigger covers releases
+published by `GITHUB_TOKEN`, which do not start another release-event workflow.
+It always checks out the repository's default branch and downloads release assets
+from the same repository; it does not execute artifacts from the triggering run.
+
+`scripts/build_web.py` finds the highest stable version at least 0.3.13. It checks
+the release's `build-info.json`, SHA-256, exact package version, BLE variant, image
+length, and the source commit resolved from its Git tag. A malformed compatible
+release fails the deployment instead of silently offering an older version. If
+there are no compatible published releases, the site still works with a local ZIP.
+
+The validated ZIP is copied into the Pages artifact and served from the same
+origin as the page. This avoids requiring browser access to GitHub API credentials
+or cross-origin release downloads. No tokens or build metadata secrets are shipped
+to the browser.
+
+The generated `firmware/latest.json` has this shape; `firmware` is `null` when no
+compatible published release is available:
+
+```json
+{
+  "schema": 1,
+  "repository": "Distortions81/goPineTime",
+  "firmware": {
+    "version": "0.3.15",
+    "tag": "v0.3.15",
+    "commit": "<40-character source commit>",
+    "package": "firmware/gopine-dfu-0.3.15.zip",
+    "sha256": "<64-character package digest>",
+    "size": 208880,
+    "imageBytes": 277132,
+    "releaseUrl": "https://github.com/Distortions81/goPineTime/releases/tag/v0.3.15",
+    "publishedAt": "2026-10-09T12:00:00Z"
+  }
+}
+```
+
+Numbers above illustrate the schema, not a published release. `package` is
+relative to the site root. A fresh build refuses to overwrite a nonempty output
+directory, avoiding stale firmware files in a deployment.
+
+## Local development
+
+Python 3 and Node 22 are sufficient; there are no third-party build dependencies.
+
+```sh
+python3 scripts/test_build_web.py
+node --test web/*.test.mjs
+python3 scripts/build_web.py --offline --output /tmp/gopine-web-preview
+python3 -m http.server 8080 --directory /tmp/gopine-web-preview
+```
+
+Open `http://localhost:8080`. Browsers treat localhost as a secure context for
+development. Omit `--offline` to stage the latest checked release; an optional
+`GH_TOKEN` environment variable raises the GitHub API rate limit. The build does
+not flash or connect to a watch. Automated browser protocol tests use a fake GATT
+receiver; a successful real transfer still needs hardware confirmation.

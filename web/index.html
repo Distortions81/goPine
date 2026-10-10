@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10241e">
+  <meta name="description" content="Update your goPine PineTime watch directly from your browser over Bluetooth.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>goPine · Watch updater</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <header class="site-header wrap">
+    <a class="brand" href="./" aria-label="goPine updater home"><img src="icon.svg" width="30" height="30" alt="">goPine<span class="brand-divider"></span><span class="brand-label">Watch updater</span></a>
+    <a class="source-link" href="https://github.com/Distortions81/goPineTime" target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗︎</span></a>
+  </header>
+  <main class="wrap">
+    <section class="intro" aria-labelledby="title">
+      <div><p class="eyebrow"><span class="dot"></span> A LITTLE WATCH. ALWAYS EVOLVING.</p><h1 id="title">New firmware.<br>Same favorite watch.</h1><p class="lead">Give your goPine an update, right here.<br> Connect over Bluetooth. Install on your watch.</p><p class="browser-note" id="browser-note">Checking browser support…</p></div>
+      <div class="watch-scene" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="watch-strap"></div><div class="watch-button"></div><div class="watch-body"><div class="watch-screen"><span class="watch-brand">goPine</span><svg class="upload-icon" viewBox="0 0 48 48" fill="none"><path d="M24 32V9m-9 9 9-9 9 9M12 31v8h24v-8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="watch-label">Ready for what's next.</span><span class="watch-track"><span id="watch-fill"></span></span></div></div><span class="floating-label"><span class="dot"></span> Over the air. Within reach.</span></div>
+    </section>
+    <section class="updater" aria-labelledby="updater-title">
+      <div class="panel-heading"><h2 id="updater-title">Let’s update your watch</h2><span class="pill">PineTime · goPine 0.3.13+</span></div>
+      <ol class="steps" aria-label="Update steps"><li id="step-1" class="active" aria-current="step"><span>1</span>Choose firmware</li><li id="step-2"><span>2</span>Send to watch</li><li id="step-3"><span>3</span>Install &amp; keep</li></ol>
+      <div class="updater-grid">
+        <section class="firmware-section" aria-labelledby="firmware-title">
+          <p class="eyebrow small">YOUR NEXT UPDATE</p><h3 id="firmware-title">Choose your firmware</h3><p class="muted" id="release-description">Looking for a published release…</p>
+          <div class="firmware-choice"><div class="file-icon" aria-hidden="true">↓</div><div class="file-info"><strong id="file-name">No firmware selected</strong><span id="file-meta">A goPine OTA .zip package</span></div><span class="validated" id="validated" hidden>Checked</span></div>
+          <div class="file-actions"><button id="latest" class="secondary" disabled>Use latest release</button><label class="file-button secondary" id="file-label" for="file">Choose a ZIP file<input type="file" id="file" accept=".zip,application/zip"></label></div>
+          <p class="field-note" id="file-help">The package is checked in your browser before any bytes are sent.</p>
+          <details id="package-details" hidden><summary>Package details</summary><dl><dt>Version</dt><dd id="package-version"></dd><dt>Size</dt><dd id="package-size"></dd><dt>SHA-256</dt><dd id="package-hash" class="hash"></dd></dl></details>
+          <a id="release-link" class="text-link" hidden target="_blank" rel="noreferrer">Release notes <span aria-hidden="true">↗︎</span></a>
+        </section>
+        <section class="transfer-section" aria-labelledby="transfer-title">
+          <p class="eyebrow small">WATCH CONNECTION</p><h3 id="transfer-title">Get your watch ready</h3>
+          <ol class="instructions" id="preparation"><li>Charge to at least <strong>20%</strong> or leave the watch on its charger. Tap <strong>KEEP</strong> if the current firmware is still a trial.</li><li>Open <strong>Settings → Firmware Update</strong> and hold to connect. Leave it on <strong>Ready to connect</strong>.</li><li>Disconnect phone apps, keep the watch close, and choose <strong>goPine Update</strong> in the Bluetooth picker.</li></ol>
+          <div id="transfer-progress" hidden><div class="progress-heading"><span id="phase">Connecting…</span><strong id="percent">0%</strong></div><progress id="progress" max="100" value="0" aria-label="Firmware bytes acknowledged by watch"></progress><p class="field-note" id="byte-count">Waiting for the watch…</p></div>
+          <p id="status" class="status" role="status" aria-live="polite">Choose a firmware package to get started.</p>
+          <div class="transfer-actions"><button id="connect" class="primary" disabled>Connect &amp; update <span aria-hidden="true">↗︎</span></button><button id="pause" class="secondary" hidden>Pause</button><button id="resume" class="primary" hidden>Resume transfer</button><button id="confirmed" class="primary" hidden>It booted — I tapped KEEP</button></div>
+          <button id="reset" class="text-button" hidden>Start over</button>
+          <p class="field-note" id="transfer-help">Keep this tab open and your device awake during the transfer.</p>
+        </section>
+      </div>
+      <div id="error" class="error" role="alert" hidden></div>
+      <div class="panel-footer"><span aria-hidden="true">◇</span><p><strong>You’re in control.</strong> The watch checks the image, then waits for you to tap <strong>INSTALL</strong>. After it reboots, tap <strong>KEEP</strong> to retain the update.</p></div>
+    </section>
+    <section class="help" aria-labelledby="help-title"><div><p class="eyebrow small">A FEW GOOD THINGS TO KNOW</p><h2 id="help-title">A small guide.<br> A smoother update.</h2></div><div class="questions">
+      <details><summary>Which browsers work?</summary><p>Use a browser with Web Bluetooth, such as Chrome or Edge on a supported computer, or Chrome on Android. Safari and Firefox don’t provide this connection; iPhone Safari cannot update directly here. Bluetooth availability also depends on your operating system and adapter.</p><p>On Linux, additional browser configuration may be needed. See the <a href="https://developer.chrome.com/docs/capabilities/bluetooth" target="_blank" rel="noreferrer">Chrome Web Bluetooth guide</a>.</p></details>
+      <details><summary>My watch isn’t in the list.</summary><p>This page connects to goPine’s in-app updater, available in BLE firmware 0.3.13 and later. Open Settings → Firmware Update and hold to connect. Disconnect your phone app; if needed, temporarily turn off the phone’s Bluetooth. Keep the watch nearby.</p><p>An InfiniTime recovery clock or an older goPine build needs the <a href="https://github.com/Distortions81/goPineTime/blob/main/docs/ota.md" target="_blank" rel="noreferrer">recovery updater</a> first.</p></details>
+      <details><summary>What if the connection drops?</summary><p>Leave this page open. It reconnects to the same watch and continues from the bytes the watch has saved. You can also pause and resume. If the watch shows an error, cancel there, then choose Start over here.</p><p>Refreshing or closing this page discards the browser’s transfer session. Cancel the old transfer on the watch before starting a new one.</p></details>
+      <details><summary>Where does the firmware come from?</summary><p>The latest-release option uses this project’s published GitHub release. A local ZIP stays in your browser and goes directly to your watch. The updater checks its structure and checksums; these are integrity checks, not a digital signature. Choose local files from a source you trust.</p></details>
+    </div></section>
+  </main>
+  <footer class="site-footer wrap"><span>goPine <span class="muted">/ Made for PineTime.</span></span><a href="https://github.com/Distortions81/goPineTime/issues" target="_blank" rel="noreferrer">Report an issue <span aria-hidden="true">↗︎</span></a></footer>
+</body>
+</html>

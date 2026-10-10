@@ -1,0 +1,233 @@
+// goPine direct update protocol v1. The watch alone can INSTALL and KEEP.
+import {MAX_IMAGE_BYTES} from './firmware.mjs';
+
+const base = '-78fc-48fe-8e23-433b3a1942d0';
+export const UUIDS = Object.freeze({
+  service: `00060000${base}`, control: `00060001${base}`,
+  data: `00060002${base}`, status: `00060003${base}`,
+});
+export const PHASE = Object.freeze({WAITING: 1, RECEIVING: 2, VERIFYING: 3, READY: 4, FAILED: 5});
+
+export class UpdateError extends Error {
+  constructor(message, {retryable = false} = {}) {
+    super(message); this.name = 'UpdateError'; this.retryable = retryable;
+  }
+}
+const check = (ok, message) => { if (!ok) throw new UpdateError(message); };
+const abortError = () => new DOMException('Transfer paused. Keep this page open to resume.', 'AbortError');
+
+/** Call directly from the user's click handler to preserve browser activation. */
+export function requestWatch() {
+  check(globalThis.isSecureContext !== false, 'Bluetooth updates require HTTPS.');
+  check(globalThis.navigator?.bluetooth?.requestDevice, 'Use a browser with Web Bluetooth, such as Chrome or Edge.');
+  return navigator.bluetooth.requestDevice({filters: [{services: [UUIDS.service]}]});
+}
+
+export function decodeStatus(value) {
+  const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) :
+    ArrayBuffer.isView(value) ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength) : null;
+  check(bytes?.length === 16 && bytes[0] === 1 && bytes[1] >= 1 && bytes[1] <= 5, 'Unsupported watch update status.');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const status = {phase: bytes[1], total: view.getUint32(4, true), offset: view.getUint32(8, true),
+    session: view.getUint32(12, true), chunk: Math.max(0, Math.min(192, bytes[3] - 8))};
+  check(status.offset <= status.total, 'Watch reported an invalid received-byte count.');
+  check(status.phase !== PHASE.FAILED && bytes[2] === 0, 'Watch stopped the update. Read its message, then use Retry on the watch.');
+  return status;
+}
+
+function randomSession() {
+  const value = new Uint32Array(1);
+  do { crypto.getRandomValues(value); } while (value[0] === 0);
+  return value[0];
+}
+function packet(command, session, total) {
+  const result = new Uint8Array(total === undefined ? 5 : 9);
+  const view = new DataView(result.buffer);
+  result[0] = command;
+  view.setUint32(1, session, true);
+  if (total !== undefined) view.setUint32(5, total, true);
+  return result;
+}
+
+/**
+ * Keep this instance to resume a paused/interrupted transfer: its private image
+ * copy and random session token are fixed for its lifetime. run() reconnects to
+ * the selected device only; stop() disconnects without discarding watch bytes.
+ * onProgress reports only flash bytes acknowledged by the watch. No callback
+ * claims successful installation: run() resolves after receiver verification.
+ */
+export class DirectUpdater {
+  #image;
+  #session;
+  #active = false;
+  #controller;
+  #acknowledged = 0;
+  #deadline = 0;
+  #pendingOperations = 0;
+  #timing;
+  constructor({device, image, onProgress = () => {}, onState = () => {}, session = randomSession(), timing = {}}) {
+    check(device?.gatt, 'Select a Bluetooth watch first.');
+    check(image instanceof Uint8Array && image.length >= 80 && image.length <= MAX_IMAGE_BYTES, 'Select and validate a firmware package first.');
+    check(Number.isInteger(session) && session > 0 && session <= 0xffffffff, 'Invalid transfer session.');
+    this.device = device;
+    this.#image = image.slice();
+    this.#session = session;
+    this.onProgress = onProgress;
+    this.onState = onState;
+    this.#timing = {...{ackTimeoutMs: 15000, verifyTimeoutMs: 45000, noProgressTimeoutMs: 90000,
+      retryDelayMs: 1000, pollIntervalMs: 25, operationTimeoutMs: 15000}, ...timing};
+    check(Object.values(this.#timing).every(value => Number.isFinite(value) && value >= 0 && value <= 300000), 'Invalid update timeout.');
+  }
+  get session() { return this.#session; }
+  get acknowledged() { return this.#acknowledged; }
+  get active() { return this.#active; }
+  #state(phase, message) { this.onState({phase, message}); }
+  #checkRunning() { if (this.#controller.signal.aborted) throw abortError(); }
+  #disconnect() { try { this.device.gatt.disconnect(); } catch { /* Already disconnected. */ } }
+  stop() { this.#controller?.abort(); this.#disconnect(); }
+  disconnect() { this.stop(); }
+
+  // Every GATT call finishes before the next starts. A stalled browser operation
+  // ends this run rather than issuing overlapping requests on an uncertain link.
+  async #operation(start) {
+    this.#checkRunning();
+    const signal = this.#controller.signal;
+    let timeout, onAbort, retired = false;
+    this.#pendingOperations++;
+    const operation = Promise.resolve().then(() => { if (signal.aborted) throw abortError(); return start(); });
+    operation.then(() => {
+      this.#pendingOperations--;
+      if (retired) this.#disconnect();
+    }, () => { this.#pendingOperations--; });
+    try {
+      return await Promise.race([operation, new Promise((_, reject) => {
+        onAbort = () => { retired = true; reject(abortError()); };
+        signal.addEventListener('abort', onAbort, {once: true});
+        timeout = setTimeout(() => {
+          retired = true;
+          reject(new UpdateError('Bluetooth stopped responding. Keep the watch update screen open, then retry on this page.', {retryable: true}));
+        }, this.#timing.operationTimeoutMs);
+      })]);
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+  async #sleep(ms) {
+    this.#checkRunning();
+    const signal = this.#controller.signal;
+    await new Promise((resolve, reject) => {
+      const onAbort = () => { clearTimeout(timer); reject(abortError()); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, ms);
+      signal.addEventListener('abort', onAbort, {once: true});
+    });
+    this.#checkRunning();
+  }
+  #identity(status) {
+    check(status.session === this.#session && status.total === this.#image.length,
+      'A different transfer is staged. Use Cancel or Retry on the watch, then start a new transfer.');
+    check(status.offset >= this.#acknowledged, 'The watch lost previously acknowledged bytes. Use Retry on the watch and start a new transfer.');
+  }
+  #progress(offset) {
+    if (offset > this.#acknowledged) {
+      this.#acknowledged = offset;
+      this.#deadline = performance.now() + this.#timing.noProgressTimeoutMs;
+    }
+    this.onProgress(offset, this.#image.length);
+  }
+  async #read(characteristic) { return decodeStatus(await this.#operation(() => characteristic.readValue())); }
+  async #wait(characteristic, predicate, timeoutMs, validate = () => {}) {
+    const deadline = performance.now() + timeoutMs;
+    while (true) {
+      const status = await this.#read(characteristic);
+      validate(status);
+      if (predicate(status)) return status;
+      if (performance.now() >= deadline) throw new UpdateError('Watch acknowledgement timed out. Keep its update screen open and retry on this page.', {retryable: true});
+      await this.#sleep(this.#timing.pollIntervalMs);
+    }
+  }
+  async #sendConnected() {
+    const server = await this.#operation(() => this.device.gatt.connect());
+    const service = await this.#operation(() => server.getPrimaryService(UUIDS.service));
+    const control = await this.#operation(() => service.getCharacteristic(UUIDS.control));
+    const data = await this.#operation(() => service.getCharacteristic(UUIDS.data));
+    const statusCharacteristic = await this.#operation(() => service.getCharacteristic(UUIDS.status));
+    check(typeof control.writeValueWithResponse === 'function' && typeof data.writeValueWithResponse === 'function',
+      'This browser cannot perform acknowledged Bluetooth writes. Use a current Chrome or Edge browser.');
+    let status = await this.#read(statusCharacteristic);
+    if (status.phase === PHASE.WAITING) {
+      check(this.#acknowledged === 0, 'The watch cleared this transfer. Start a new transfer after opening its update screen.');
+      check(status.total === 0 && status.offset === 0 && status.session === 0, 'Watch reported an inconsistent waiting state.');
+      await this.#operation(() => control.writeValueWithResponse(packet(1, this.#session, this.#image.length)));
+      status = await this.#wait(statusCharacteristic, value => value.phase !== PHASE.WAITING, this.#timing.ackTimeoutMs);
+    }
+    this.#identity(status);
+    this.#progress(status.offset);
+    if (status.phase === PHASE.READY) {
+      check(status.offset === this.#image.length, 'Watch verified an incomplete image.');
+      return;
+    }
+    if (status.phase === PHASE.RECEIVING) this.#state('sending', 'Sending firmware to the watch.');
+    while (status.phase === PHASE.RECEIVING && status.offset < status.total) {
+      check(status.chunk > 0, 'Watch has no usable Bluetooth write size. Reconnect and retry.');
+      const end = Math.min(status.total, status.offset + status.chunk);
+      const value = new Uint8Array(8 + end - status.offset);
+      const header = new DataView(value.buffer);
+      header.setUint32(0, this.#session, true);
+      header.setUint32(4, status.offset, true);
+      value.set(this.#image.subarray(status.offset, end), 8);
+      await this.#operation(() => data.writeValueWithResponse(value));
+      status = await this.#wait(statusCharacteristic,
+        next => next.offset >= end || next.phase !== PHASE.RECEIVING, this.#timing.ackTimeoutMs,
+        next => this.#identity(next));
+      check(status.phase === PHASE.RECEIVING && status.offset === end, 'Watch acknowledgement does not match this chunk.');
+      this.#progress(status.offset);
+    }
+    check(status.offset === this.#image.length, 'Watch entered verification before receiving the complete image.');
+    this.#state('verifying', 'The watch is checking the received firmware.');
+    if (status.phase === PHASE.RECEIVING) {
+      await this.#operation(() => control.writeValueWithResponse(packet(2, this.#session)));
+    } else check(status.phase === PHASE.VERIFYING, 'Unexpected watch transfer state.');
+    status = await this.#wait(statusCharacteristic, next => next.phase === PHASE.READY, this.#timing.verifyTimeoutMs, next => {
+      this.#identity(next);
+      check(next.offset === this.#image.length && [PHASE.RECEIVING, PHASE.VERIFYING, PHASE.READY].includes(next.phase),
+        'Watch verification does not match this transfer.');
+    });
+    this.#identity(status);
+  }
+  async run() {
+    check(!this.#active, 'A firmware transfer is already running.');
+    if (this.#pendingOperations > 0) throw new UpdateError('The previous Bluetooth request is still closing. Wait a moment, then resume.', {retryable: true});
+    this.#active = true;
+    this.#controller = new AbortController();
+    this.#deadline = performance.now() + this.#timing.noProgressTimeoutMs;
+    try {
+      while (true) {
+        this.#checkRunning();
+        this.#state('connecting', 'Connecting to the selected watch.');
+        try {
+          await this.#sendConnected();
+          this.#checkRunning();
+          this.#state('ready', 'Firmware verified. Tap INSTALL on the watch, then KEEP after it restarts.');
+          return {session: this.#session, bytes: this.#image.length};
+        } catch (error) {
+          this.#disconnect();
+          this.#checkRunning();
+          if (error instanceof UpdateError || ['NotFoundError', 'NotSupportedError', 'SecurityError', 'TypeError'].includes(error?.name)) throw error;
+          if (performance.now() >= this.#deadline) throw new UpdateError('Could not reconnect to the watch. Keep its update screen open and retry on this page.', {retryable: true});
+          this.#state('reconnecting', 'Connection interrupted. Reconnecting to the last acknowledged byte.');
+          await this.#sleep(this.#timing.retryDelayMs);
+        }
+      }
+    } catch (error) {
+      if (this.#controller.signal.aborted) {
+        this.#state('stopped', 'Transfer paused. Keep this page open to resume, or Cancel on the watch to discard it.');
+        throw abortError();
+      }
+      throw error;
+    } finally {
+      this.#active = false;
+      this.#disconnect();
+    }
+  }
+}

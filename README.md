@@ -4,7 +4,9 @@ goPine is a digital clock with alarms, stopwatch, and countdown for the PineTime
 with [TinyGo](https://tinygo.org/). It also includes an SDL2 desktop simulator
 that uses the same clock and font rendering code as the watch build.
 
-Version **0.3.15** includes in-app Bluetooth firmware updates, weather and music
+Version **0.3.16** fixes a Linux Bluetooth pairing conflict during firmware updates.
+The browser updater selects the latest release automatically and improves timeout
+recovery. It also includes in-app Bluetooth firmware updates, weather and music
 controls, an Android-compatible notification inbox, charger wake screens, and a
 saved flipped-screen option. Phone connections are opt-in and switch Off after
 reboot. Secure passkey pairing and one saved phone bond support ongoing
@@ -13,10 +15,11 @@ InfiniLink/Gadgetbridge integration; iPhone system notifications are not impleme
 Use the [browser updater](https://distortions81.github.io/goPineTime/) with goPine
 0.3.13 or newer already installed, or download the application ZIP from
 [GitHub Releases](https://github.com/Distortions81/goPineTime/releases/latest).
-See the [0.3.15 release notes](docs/releases/0.3.15.md) and
+See the [0.3.16 release notes](docs/releases/0.3.16.md) and
 [roadmap](docs/roadmap.md) for changes and validation limits. The last hardware
 boot/KEEP confirmation is 0.3.14; a local 0.3.15 image completed direct transfer
-and watch verification, with its boot/KEEP confirmation still pending.
+and watch verification. The user subsequently reported running the public 0.3.15
+release; KEEP for that version and hardware checks of 0.3.16 remain unconfirmed.
 
 ## Desktop simulator
 

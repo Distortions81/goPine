@@ -21,7 +21,7 @@ def main():
             executable = pathlib.Path(output) / name
             command = ["clang", "-g", "-fsanitize=address,undefined", "-Wno-pointer-to-int-cast"]
             command += [f"-I{p}" for p in includes]
-            if name == "bond_store":
+            if name in ("bond_store", "update"):
                 nimble = args.infinitime.resolve() / "src/libs/mynewt-nimble"
                 command += ["-include", str(port / "config.h")]
                 command += [f"-I{nimble / path}" for path in (

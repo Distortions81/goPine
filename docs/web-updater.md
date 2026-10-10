@@ -46,6 +46,13 @@ without acknowledged progress. A timed-out native Bluetooth request must finish
 closing before another starts; Resume and Start over stay disabled until then.
 Error messages identify the connection stage and preserve the browser's error.
 
+**Installed 0.3.15 on Linux:** an automatic Battery Service read can trigger a
+pairing request that the watch rejects in update mode, causing a reconnect loop
+before any transfer. Firmware 0.3.16 fixes this conflict. If the existing 0.3.15
+watch cannot maintain its update connection, install the patch through the
+[legacy recovery route](ota.md#legacy-recovery-update-with-one-command-linux).
+Changing the webpage cannot patch a watch before the new image is installed.
+
 The page validates the application package, image hash, link addresses and size
 before transfer. The watch also validates the completed image before offering
 INSTALL. These checks detect corruption and incompatible package layouts; they

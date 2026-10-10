@@ -17,6 +17,7 @@
 #include "music_mailbox.h"
 #include "notification_mailbox.h"
 #include "update_mailbox.h"
+#include "battery_security.h"
 
 extern int ble_ll_hci_cmd_rx(uint8_t *, void *);
 extern int ble_ll_hci_acl_rx(struct os_mbuf *, void *);
@@ -103,9 +104,8 @@ static int time_access(uint16_t conn, uint16_t attr,
 
 static int battery_access(uint16_t conn, uint16_t attr,
                           struct ble_gatt_access_ctxt *ctx, void *arg) {
-    (void)conn; (void)attr; (void)arg;
-    if (ctx->op != BLE_GATT_ACCESS_OP_READ_CHR) return BLE_ATT_ERR_UNLIKELY;
-    return os_mbuf_append(ctx->om, &battery_level, 1) ? BLE_ATT_ERR_INSUFFICIENT_RES : 0;
+    (void)attr; (void)arg;
+    return battery_read_access(conn,ctx,window,update_window,battery_level);
 }
 
 void gopine_ble_update_battery(uint8_t value) {
@@ -220,7 +220,7 @@ static const struct ble_gatt_svc_def services[] = {
     {.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = BLE_UUID16_DECLARE(0x180f),
      .characteristics = (struct ble_gatt_chr_def[]) {
          {.uuid = BLE_UUID16_DECLARE(0x2a19), .access_cb = battery_access,
-          .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
+          .flags = GOPINE_BATTERY_FLAGS,
           .val_handle = &battery_handle},
          {0}}},
     {.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &weather_uuid.u,

@@ -71,9 +71,6 @@ func (u *watchUI) handleWeather(e inputEvent, now time.Time, state updateState) 
 		} else {
 			u.page = pageWeather
 		}
-	} else if inRect(e, 126, 188, 228, 232) {
-		w.open, w.received, w.status, w.expires = true, 0, "Connect your phone", now.Add(weatherWindow)
-		u.page = pageWeatherSync
 	}
 }
 
@@ -112,7 +109,6 @@ func (c *timeSyncController) updateWeather(u *watchUI, now time.Time, battery ui
 		}
 		c.running, c.weatherMode = true, true
 	}
-	c.radio.Service()
 	// At most one current record and one forecast per event-loop pass.
 	for i := 0; i < 2; i++ {
 		packet, n, err := radio.TakeWeather()
@@ -149,7 +145,7 @@ func weatherAgeText(received, now time.Time) (text [32]byte, n int) {
 	// seconds. Report receipt age without guessing a timezone.
 	age := max(0, now.Sub(received))
 	if age >= 24*time.Hour {
-		n = copy(text[:], "Out of date: update")
+		n = copy(text[:], "Over 24 hours old")
 		return
 	}
 	value, suffix := int(age/time.Minute), " min ago"
@@ -212,7 +208,7 @@ func (u *watchUI) drawWeather(d canvas, now time.Time) {
 	if u.page == pageWeather {
 		if !w.cache.HasCurrent {
 			centered(d, &uifont.Regular18, 94, "No weather yet", white)
-			centered(d, &uifont.Regular18, 129, "Tap UPDATE to connect", muted)
+			centered(d, &uifont.Regular18, 129, "Settings > Phone", muted)
 		} else {
 			v := &w.cache.Current
 			if textVisible(d, &uifont.Regular18, 60, "") {
@@ -256,5 +252,4 @@ func (u *watchUI) drawWeather(d canvas, now time.Time) {
 		}
 		clockControl(d, 12, 188, 102, 44, "NOW", card)
 	}
-	clockControl(d, 126, 188, 102, 44, "UPDATE", positive)
 }

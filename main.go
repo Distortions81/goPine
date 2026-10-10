@@ -45,6 +45,7 @@ func openApplication() (*watchApplication, error) {
 
 	ui := newWatchUI(firmwareState())
 	syncController := timeSyncController{radio: newTimeRadio()}
+	syncController.allowPhone = func() bool { return firmwareState() == firmwareConfirmed }
 	activeTimeRadio = syncController.radio
 	persistence := restoreClock(&ui, time.Now())
 	settings := loadSettings(&ui, time.Now(), persistence.journal)
@@ -54,8 +55,9 @@ func openApplication() (*watchApplication, error) {
 	beforeReset := func() {
 		// Best effort: clock storage failure must not prevent OTA or rollback.
 		allowed := updatePowerOK(display.PowerStatus())
-		settings.flush(&ui, time.Now(), allowed)
-		persistence.beforeReset(&ui, time.Now(), allowed)
+		idle := !radioBusy(syncController.radio)
+		settings.flush(&ui, time.Now(), allowed && idle)
+		persistence.beforeReset(&ui, time.Now(), allowed && idle)
 	}
 	var renderer frameRenderer
 	progress := func(title string) func(int) {
@@ -85,15 +87,21 @@ func openApplication() (*watchApplication, error) {
 
 	loop := watchLoop{display: display, ui: &ui, sync: &syncController, renderer: &renderer,
 		now: time.Now, state: firmwareState}
+	loop.beforeSync = func(now time.Time) {
+		// Keep the flash save outside the deeper phone-update call stack. Save
+		// opt-in before starting BLE; low battery leaves a temporary choice.
+		if ui.phoneAuto && !syncController.running && !radioBusy(syncController.radio) && !settings.saved.matches(&ui) {
+			settings.flush(&ui, now, firmwareState() == firmwareConfirmed && !ui.timers.active)
+		}
+	}
 	updater := &directUpdater{sync: &syncController, openFlash: openUpdateFlash,
 		confirmed: func() bool { return firmwareState() == firmwareConfirmed },
 		powerOK:   func() bool { return updatePowerOK(display.PowerStatus()) },
 		reboot:    func() error { return restartUpdatedFirmware(beforeReset) }}
 	loop.updater = updater
 	loop.save = func(now time.Time, power powerStatus) time.Time {
-		allowed := updatePowerOK(power) && !syncController.running && !ui.timers.active && firmwareState() == firmwareConfirmed
-		settings.update(&ui, now, allowed)
-		return settings.deadline(allowed)
+		allowed := updatePowerOK(power) && !ui.timers.active && firmwareState() == firmwareConfirmed
+		return syncController.saveSettings(&ui, settings, now, allowed)
 	}
 	loop.action = func(action uiAction) {
 		switch action {
@@ -129,7 +137,7 @@ func openApplication() (*watchApplication, error) {
 			_ = display.Close()
 		},
 		flush: func() {
-			settings.flush(&ui, time.Now(), updatePowerOK(display.PowerStatus()) && firmwareState() == firmwareConfirmed)
+			settings.flush(&ui, time.Now(), updatePowerOK(display.PowerStatus()) && firmwareState() == firmwareConfirmed && !radioBusy(syncController.radio))
 		},
 	}, nil
 }
@@ -158,10 +166,10 @@ type frameKey struct {
 //go:noinline
 func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 	if u.pairingVisible() {
-		return frameKey{page: pagePairing, step: int(u.pairing.code)}
+		return frameKey{page: pagePairing, step: int(u.pairing.code), syncSecond: int64(u.pairing.progress)}
 	}
 	if u.page == pagePairingSettings && u.pairing != nil {
-		return frameKey{page: pagePairingSettings, step: u.pairing.status, holding: u.pairing.confirm, message: u.pairing.note}
+		return frameKey{page: pagePairingSettings, step: u.pairing.status, holding: u.pairing.confirm, message: u.pairing.note, syncSecond: int64(u.pairing.diagnostic) | int64(u.pairing.progress)<<32}
 	}
 	if u.powerNoticeVisible() {
 		return frameKey{page: pageCharging, percent: power.Percent, power: power.State}
@@ -194,6 +202,9 @@ func (u *watchUI) frameKey(now time.Time, power powerStatus) frameKey {
 	if (u.page == pageMusic || u.page == pagePhone) && u.phone != nil {
 		p := u.phone
 		key.weatherRevision, key.message, key.step = p.revision, p.status, int(p.mode)
+		if u.page == pagePhone {
+			key.touchWake = u.phoneAuto
+		}
 		if p.mode == phoneSession {
 			key.syncSecond = int64(max(0, p.expires.Sub(now)+time.Minute-1) / time.Minute)
 		}

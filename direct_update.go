@@ -149,7 +149,8 @@ func (d *directUpdater) tick(u *watchUI, now time.Time, power powerStatus) {
 		}
 		d.sync.running, d.sync.directMode = true, true
 	}
-	r.Service()
+	// The main loop pumps host callbacks through sync.update after this frame
+	// returns. Connection/discovery must not run beneath OTA packet/flash work.
 	if _, _, _, err := r.Take(); err != nil {
 		t.open = false
 		if releaseErr := d.release(); releaseErr != nil {

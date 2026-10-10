@@ -17,15 +17,18 @@ def main():
     includes = [tests, port / "include",
                 args.infinitime.resolve() / "src/libs/mynewt-nimble/nimble/include"]
     with tempfile.TemporaryDirectory(prefix="gopine-ble-test-") as output:
-        for name in ("alloc", "npl", "weather", "music", "notification", "update", "bond", "bond_store"):
+        for name in ("alloc", "npl", "weather", "music", "notification", "ancs", "update", "phone_time", "sm", "bond", "bond_store"):
             executable = pathlib.Path(output) / name
             command = ["clang", "-g", "-fsanitize=address,undefined", "-Wno-pointer-to-int-cast"]
             command += [f"-I{p}" for p in includes]
-            if name in ("bond_store", "update"):
+            if name in ("bond_store", "update", "phone_time", "sm", "ancs"):
                 nimble = args.infinitime.resolve() / "src/libs/mynewt-nimble"
                 command += ["-include", str(port / "config.h")]
                 command += [f"-I{nimble / path}" for path in (
                     "porting/nimble/include", "nimble/host/include", "nimble/host/store/ram/include", "nimble/host/store/ram/src")]
+                if name == "sm":
+                    command += [f"-I{nimble / 'nimble/host/src'}",
+                                "-O1", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections"]
             if name in ("alloc", "npl"):
                 command += [str(port / f"{name}.c")]
             command += [str(tests / f"{name}_test.c"), "-o", str(executable)]

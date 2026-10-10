@@ -73,6 +73,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes clang llvm
       - name: Test cooperative Bluetooth primitives
         run: python3 scripts/test-ble-port.py --infinitime build/deps/InfiniTime
+      - name: Test Bluetooth host connections and restarts
+        run: python3 scripts/test-ble-host.py --infinitime build/deps/InfiniTime
       - name: Build experimental Bluetooth time-sync candidate
         env:
           FIRMWARE_TIME: "00:00:00"

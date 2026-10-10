@@ -65,6 +65,7 @@ type watchUI struct {
 	use24         bool
 	touchWake     bool
 	flipScreen    bool
+	phoneAuto     bool
 	holding       bool
 	holdSince     time.Time
 	holdStep      int
@@ -110,13 +111,7 @@ func (u *watchUI) showMessage(message string) {
 func (u *watchUI) back(state updateState) {
 	u.cancelHold()
 	if u.page == pagePhone {
-		u.page = pageMusic
-		if u.phone != nil {
-			if u.phone.fromInbox {
-				u.page = pageInbox
-			}
-			u.phone.announced = false
-		}
+		u.page = pageSettings
 	} else if u.page == pageNotification {
 		u.page = pageInbox
 	} else if u.page == pageInbox {
@@ -263,9 +258,11 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 	case pageApps, pageAlarms, pageAlarmRepeat, pageStopwatch, pageCountdown, pageCountdownEdit:
 		u.handleTimerTap(e, now)
 	case pageSettings:
-		if inRect(e, 16, 52, 224, 108) {
+		if inRect(e, 16, 42, 224, 82) {
 			u.page = pageTimeSettings
-		} else if inRect(e, 16, 120, 224, 168) {
+		} else if inRect(e, 16, 88, 224, 128) {
+			u.openPhone()
+		} else if inRect(e, 16, 134, 224, 174) {
 			switch state {
 			case firmwareUnavailable:
 				u.showMessage("Wired MCUboot setup required. See OTA docs.")
@@ -281,7 +278,7 @@ func (u *watchUI) handle(e inputEvent, now time.Time, state updateState, power p
 					u.page, u.expires = pageUpdate, now.Add(30*time.Second)
 				}
 			}
-		} else if inRect(e, 16, 174, 224, 218) {
+		} else if inRect(e, 16, 180, 224, 220) {
 			u.page = pageDisplaySettings
 		}
 	case pageMessage:
@@ -462,11 +459,10 @@ func (u *watchUI) draw(d canvas, now time.Time) {
 	}
 	if u.page == pageSettings {
 		centered(d, &uifont.Bold18, 29, "SETTINGS", white)
-		gfx.RoundBox(d, 16, 52, 208, 56, 6, card)
-		centered(d, &uifont.Bold18, 86, "TIME & DATE", white)
-		gfx.RoundBox(d, 16, 120, 208, 48, 6, card)
-		centered(d, &uifont.Bold18, 150, "FIRMWARE UPDATE", accent)
-		drawButton(d, 16, 208, "DISPLAY", false)
+		clockControl(d, 16, 42, 208, 40, "TIME & DATE", card)
+		clockControl(d, 16, 88, 208, 40, "PHONE", card)
+		clockControl(d, 16, 134, 208, 40, "FIRMWARE UPDATE", positive)
+		clockControl(d, 16, 180, 208, 40, "DISPLAY", card)
 		return
 	}
 	centered(d, &uifont.Regular18, 29, "goPine "+firmwareVersion, muted)

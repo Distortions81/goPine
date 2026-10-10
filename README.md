@@ -4,22 +4,53 @@ goPine is a digital clock with alarms, stopwatch, and countdown for the PineTime
 with [TinyGo](https://tinygo.org/). It also includes an SDL2 desktop simulator
 that uses the same clock and font rendering code as the watch build.
 
-Version **0.3.16** fixes a Linux Bluetooth pairing conflict during firmware updates.
-The browser updater selects the latest release automatically and improves timeout
-recovery. It also includes in-app Bluetooth firmware updates, weather and music
-controls, an Android-compatible notification inbox, charger wake screens, and a
-saved flipped-screen option. Phone connections are opt-in and switch Off after
-reboot. Secure passkey pairing and one saved phone bond support ongoing
-InfiniLink/Gadgetbridge integration; iPhone system notifications are not implemented.
+The latest public release is **0.3.16**, which fixes a Linux Bluetooth pairing
+conflict during firmware updates. The browser updater selects the latest release
+automatically. Current source targets **0.3.21**, a candidate that brings time,
+weather, music, and supported notifications together under **Settings → Phone**,
+with a saved auto-connect preference and automatic time from the paired phone.
+It also includes in-app firmware updates, charger wake screens, and a saved
+flipped-screen option. Phone connections are opt-in. The candidate adds an ANCS
+client for iPhone notifications; on-device validation remains pending.
+The [0.3.19 follow-up](docs/releases/0.3.19.md) keeps phone setup awake for two
+minutes and defers settings-save disconnects while pairing is in progress.
+The [0.3.20 follow-up](docs/releases/0.3.20.md) fixes a missed wake signal for
+queued Bluetooth host events and renews setup visibility after waking Phone.
+It also services controller work during pairing's key calculation, following
+InfiniTime's controller-priority behavior. Phone → INFO retains pairing errors.
+It restores the controller's saved phone identity keys after reset, following
+InfiniTime's bond restore, so private-address changes preserve the pairing.
+It also enables the GATT client operations required for ANCS; disabling the BLE
+central radio role had inadvertently disabled those operations as well.
+The full simulated Secure Connections exchange and saved-bond reconnect now
+pass; these checks do not establish a working physical InfiniLink connection.
+The watch received and verified 0.3.20 through the in-app updater on 2026-10-10;
+INSTALL and boot/KEEP have not been reported. The user subsequently reported
+entering the pairing code without completion; INFO showed **No saved phone**.
+Physical pairing remains unresolved. The [0.3.21 follow-up](docs/releases/0.3.21.md)
+accepts authenticated feature writes while the final identity exchange is
+pending, preventing a redundant ATT authentication error. Their data stays
+queued until bonding completes and is cleared if security fails. It also
+shows the pairing stage and completed code-check rounds on the PIN screen,
+and retains the last stage in INFO after failure. It is prepared, not flashed.
 
 Use the [browser updater](https://distortions81.github.io/goPineTime/) with goPine
 0.3.13 or newer already installed, or download the application ZIP from
 [GitHub Releases](https://github.com/Distortions81/goPineTime/releases/latest).
-See the [0.3.16 release notes](docs/releases/0.3.16.md) and
-[roadmap](docs/roadmap.md) for changes and validation limits. The last hardware
-boot/KEEP confirmation is 0.3.14; a local 0.3.15 image completed direct transfer
-and watch verification. The user subsequently reported running the public 0.3.15
-release; KEEP for that version and hardware checks of 0.3.16 remain unconfirmed.
+See the [0.3.16 release notes](docs/releases/0.3.16.md),
+[0.3.17 candidate notes](docs/releases/0.3.17.md), and [roadmap](docs/roadmap.md)
+for changes and validation limits. **0.3.19 booted successfully and was confirmed
+with KEEP on 2026-10-10. The preceding 0.3.17 crashed before showing a pairing
+code on one attempt and did not complete after code entry on another.** The candidate's phone
+compatibility, reconnect behavior, and battery consumption require hardware tests.
+On 0.3.18, the user reported a setup screen that slept quickly and a pairing
+code/iPhone prompt that disappeared before entry. Clearing saved pairing keys
+allowed a fresh code but did not establish a successful connection.
+On 0.3.19, setup still slept quickly after waking it, and the pairing code and
+iPhone prompt still disappeared. Phone pairing remains a hardware failure.
+The [0.3.18 candidate](docs/releases/0.3.18.md) adds Apple notifications, makes
+Settings → Phone the sole pairing entry, reduces Bluetooth callback nesting,
+and fixes a reproduced GATT service-memory defect when Bluetooth restarts.
 
 ## Desktop simulator
 
@@ -91,26 +122,20 @@ address zero and overwrites the bootloader. Use `scripts/build-ota.sh` instead.
 
 The PineTime's 32.768 kHz RTC keeps time while the CPU sleeps, but it is not a
 battery-backed calendar clock and resets when the watch reboots. The OTA build
-seeds local date/time (use `TZ=America/Denver bash scripts/build-ota.sh 0.2.4`,
+seeds local date/time (use `TZ=America/Denver bash scripts/build-ota.sh 0.3.18`,
 or your own timezone). Set the correct time after flashing in **Settings →
 Time & Date**. Planned goPine OTA/revert resets now hand off the date/hour in
 flash and minutes/seconds in retention registers, with no periodic flash writes.
 Restored time is approximate: reboot/recovery time is not counted. Unexpected
-resets or power loss fall back to the build seed. The opt-in Bluetooth candidate
-adds **Sync Time**, an InfiniLink hint, on-watch approval, and a PC sender.
-Version 0.2.5 successfully received PC time after a reboot, confirmed by the user
-on 2026-10-05; reopening sync without rebooting exposed a radio restart bug. Version 0.2.6
-extends the sync window from one to five minutes and restores the radio crystal
-clock when reopening sync. The 0.2.7 compatibility work also exposes the standard
-Battery Service that InfiniLink uses to finish its connected state. The installed
-**0.3.14** includes weather, music, phone sessions, notifications, direct updates
-and charger notices. **0.3.15** adds secure passkey pairing, saved bonds, a connected-radio
-shutdown fix, and a saved flipped-screen option. A local image completed direct
-transfer and watch verification; boot/KEEP confirmation is pending. Pairing and reconnect still need InfiniLink hardware validation;
-iPhone system notifications still require a separate ANCS client. Start testing
-with **Developer → Force ANCS off**. Bluetooth remains opt-in through time,
-weather, update or phone sessions. See [pairing and validation](docs/pairing.md).
-The planned-reset handoff still needs dedicated hardware testing.
+resets or power loss fall back to the build seed. In the 0.3.17 candidate,
+**Settings → Phone** accepts valid time updates automatically from the paired,
+authenticated, encrypted phone connection. The companion must send a fresh local
+time to reflect timezone or DST changes. Manual Time & Date controls remain
+available. The former standalone time proposal flow remains in the transport
+and tests but is no longer exposed by the normal UI. The 0.3.18 candidate adds
+the ANCS client needed for InfiniLink's normal connection mode; allow notification
+sharing when iOS asks. See [pairing and validation](docs/pairing.md).
+Automatic phone time and the planned-reset handoff need dedicated hardware tests.
 
 The watch face uses large, high-contrast time with 12-hour time by default.
 A battery gauge and readable percentage show estimated remaining charge;
@@ -129,7 +154,7 @@ wake the screen with either setting. The choice persists alongside other setting
 in MCUboot builds and simulators configured with storage. See the
 [sleep power audit](docs/power.md) for remaining background activity and hardware checks.
 
-The 0.3.14 candidate wakes on charger connection, disconnection, and charging
+The watch wakes on charger connection, disconnection, and charging
 start/stop, showing a full-screen battery gauge and large percentage. Tap to
 return to the previous screen, or let the normal 15-second timeout turn the
 screen off. Alarms and update/sync screens retain priority. Detection uses GPIO
@@ -168,7 +193,8 @@ After the watch verifies the image, tap **Install**, then **KEEP** after reboot.
 Brief Bluetooth disconnects can resume within the same transfer. The session
 expires after ten minutes without transfer activity; Cancel or an alarm ends it
 with the current firmware still running. At least 20% battery or external power
-is required. Normal phone connections stop when this update mode opens.
+is required. Normal phone connections pause when this update mode opens; the
+0.3.17 candidate resumes enabled auto-connect after leaving the update screens.
 Versions through 0.3.12 opened InfiniTime recovery after the hold.
 
 An unconfirmed OTA build shows **KEEP / REVERT** instead. The simulator supports
@@ -199,28 +225,42 @@ for the test scope and remaining dedicated hardware checks.
 
 ## Phone features
 
-Open **Apps → Weather** for current conditions and forecast. Tap **UPDATE**, then
-connect InfiniLink or Gadgetbridge and send weather during the 60-second window.
-Current conditions and five forecast days remain cached after disconnect. Tap
-the **C/F** unit in the top-right to switch units. The cache and unit choice last
-until reboot. Receipt age is displayed, with a warning after 24 hours; it does
-not claim the age of the provider's observation. See the
-[weather integration notes](docs/time.md#phone-weather-candidate-038) for setup,
-compatibility limits and validation.
+In the **0.3.18 candidate**, open **Settings → Phone → CONNECT PHONE**, pair once,
+and leave **AUTO CONNECT: ON**. Pairing has one home in Settings; feature screens
+use the connection automatically.
+Time, weather, music metadata, and notifications share one authenticated,
+encrypted connection. Incoming phone writes require the saved bond and a full
+16-byte encryption key. The auto-connect preference survives a confirmed reboot;
+new installations and older settings default to Off. **BLUETOOTH OFF** disables
+automatic reconnection and retains the bond. The phone app controls whether and
+when it reconnects; the watch cannot force a suspended app to run.
 
-**Apps → Music → LINK** offers Off (default), Connect 10 Min, and Stay Connected.
-Connections survive screen sleep; the ten-minute option expires automatically.
-Music provides track/artist text, play/pause, previous/next and volume controls.
-Tap the track text to refresh metadata. Controls require a companion subscription;
-play/pause additionally requires reported playback state. Incoming weather is also
-cached during an active phone connection. Reboot returns the connection to Off.
+Connections survive screen sleep and navigation between apps. When changed
+settings need an internal flash save, the candidate briefly pauses the phone
+connection, waits for radio shutdown to finish, saves, and resumes auto-connect.
+Reconnect advertising retains the existing slow 1–1.5-second intervals after its
+initial fast window. The unused motion and heart-rate sensors remain powered
+down; no sensor polling has been added for weather.
 
-Android/Gadgetbridge and iPhone/InfiniLink are the intended companions; InfiniLink's
-music support targets Apple Music and requires its music/volume permissions.
-System-wide iPhone media and notifications are not implemented. The local build
-uses InfiniTime's NimBLE crystal management and deadline-based waits; connected
-power consumption still needs hardware measurements. See the
-[connection and music notes](docs/time.md#phone-connections-and-music-candidate-039).
+**Apps → Weather** shows current conditions and five forecast days received from
+the phone, retaining them after disconnect until reboot. Tap **C/F** to change
+units. Receipt age is displayed, with a warning after 24 hours; it does not claim
+the age of the provider's observation. InfiniLink can push weather on foreground
+connection and location/app refresh, but its periodic background trigger depends
+on motion notifications that goPine does not send. Unmodified Gadgetbridge's
+firmware-version gate currently prevents weather delivery to goPine 0.3.x.
+
+**Apps → Music** provides track/artist text, play/pause, previous/next, and volume
+controls. Controls require a companion subscription; play/pause also requires
+reported playback state. Tapping track text sends a metadata refresh hint that
+InfiniLink accepts and Gadgetbridge ignores. InfiniLink targets Apple Music and
+requires its music/volume permissions. Android notification forwarding uses the
+ANS inbox. The 0.3.18 candidate receives iPhone notifications through ANCS into
+the same Inbox, including updates and removals. It preserves silent/pre-existing
+notification flags and clears Apple session data when disconnecting. Watch-side
+Dismiss affects the local inbox; remote notification actions and system-wide
+iPhone media control are not implemented.
+See [phone setup, companion limits, and hardware checks](docs/pairing.md).
 
 ## Verification
 
@@ -229,7 +269,7 @@ go test ./...
 go vet ./...
 go test -run 'TestScript|TestRuntime|TestUnsetClock|TestTimersCreatedBefore' .
 tinygo build -target=./targets/pinetime-gopine.json -ldflags="-X main.firmwareTime=00:00:00" -o /tmp/goPine.hex .
-bash scripts/build-ota.sh 0.2.0
+bash scripts/build-ota.sh --ble 0.3.18
 ```
 
 The scripted tests advance a virtual clock through the production event loop,
@@ -245,7 +285,7 @@ measurement of free runtime heap. See [resource audit](docs/timers.md#failed-030
 
 ```sh
 python3 scripts/test_check_resources.py
-python3 scripts/check-resources.py build/ota/gopine-0.3.1.elf
+python3 scripts/check-resources.py build/ota/gopine-0.3.18.elf
 ```
 
 ## Recovery: red, green and blue

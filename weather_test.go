@@ -60,7 +60,9 @@ func (r *fakeWeatherRadio) TakeWeather() (p [weather.MaxPacket]byte, n int, err 
 func weatherUI(now time.Time) watchUI {
 	u := newWatchUI(firmwareConfirmed)
 	u.openWeather()
-	u.handle(inputEvent{Kind: inputTap, X: 180, Y: 210}, now, firmwareConfirmed, powerStatus{})
+	// Exercise the legacy bounded receiver directly; normal navigation uses Phone.
+	u.weather.open, u.weather.status, u.weather.expires = true, "Connect your phone", now.Add(weatherWindow)
+	u.page = pageWeatherSync
 	return u
 }
 
@@ -130,7 +132,7 @@ func TestWeatherAgesNavigationAndFrameKeys(t *testing.T) {
 		want string
 	}{
 		{now, "Received 0 min ago"}, {now.Add(time.Hour), "Received 1 hr ago"},
-		{now.Add(24 * time.Hour), "Out of date: update"}, {now.Add(-time.Hour), "Received 0 min ago"},
+		{now.Add(24 * time.Hour), "Over 24 hours old"}, {now.Add(-time.Hour), "Received 0 min ago"},
 	} {
 		if got := weatherAge(now, tc.at); got != tc.want {
 			t.Fatal(got, tc.want)

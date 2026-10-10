@@ -9,6 +9,18 @@ spec.loader.exec_module(resources)
 
 
 class ResourceChecks(unittest.TestCase):
+    def test_crypto_controller_path_includes_nested_c_frames(self):
+        symbols, frames = self.fixture()
+        c_frames = {name: 32 for name in resources.BLE_CRYPTO_FRAMES}
+        result = resources.audit(symbols, frames, 8192, c_frames)
+        self.assertIn("pairing_crypto_controller", result["core_path_frames_bytes"])
+        c_frames["EccPoint_mult"] = 5000
+        errors = resources.audit(symbols, frames, 8192, c_frames)["errors"]
+        self.assertTrue(any("pairing_crypto_controller" in error for error in errors))
+        del c_frames["EccPoint_mult"]
+        with self.assertRaises(ValueError):
+            resources.audit(symbols, frames, 8192, c_frames)
+
     def fixture(self):
         names = [resources.ROOT, resources.RUN, resources.LOOP, resources.TICK,
                  resources.FLUSH, resources.SAVE, "main.buildClockTime",
@@ -64,6 +76,15 @@ class ResourceChecks(unittest.TestCase):
         frames[0x9000] = 4096
         errors = resources.audit(symbols, frames, 8192)["errors"]
         self.assertTrue(any("phone_update" in error for error in errors))
+
+    def test_bluetooth_and_apple_notification_stack_growth_fails(self):
+        for name, path in (("(main.pineTimeRadio).Service", "bluetooth_host"),
+                           ("(*main.watchUI).receiveAppleNotifications", "apple_notification_update")):
+            symbols, frames = self.fixture()
+            symbols[name] = 0x9000
+            frames[0x9000] = 4096
+            errors = resources.audit(symbols, frames, 8192)["errors"]
+            self.assertTrue(any(path in error for error in errors))
 
     def test_weather_stack_growth_fails(self):
         symbols, frames = self.fixture()

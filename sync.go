@@ -15,12 +15,17 @@ type timeRadio interface {
 	Take() ([10]byte, int, time.Duration, error)
 }
 
-// All methods run on the UI goroutine, including service calls between strips.
+// All methods run on the UI goroutine. Between strips and during input waits,
+// service only controller timing; defer host callbacks to the shallow loop.
 var activeTimeRadio timeRadio
 
 func serviceTimeRadio() {
 	if activeTimeRadio != nil {
-		activeTimeRadio.Service()
+		if r, ok := activeTimeRadio.(interface{ ServiceController() }); ok {
+			r.ServiceController()
+		} else {
+			activeTimeRadio.Service()
+		}
 	}
 }
 
@@ -42,6 +47,8 @@ type timeSyncController struct {
 	weatherMode bool
 	phoneMode   phoneMode
 	directMode  bool
+	saving      bool
+	allowPhone  func() bool
 }
 
 func (c *timeSyncController) close() {
@@ -55,6 +62,9 @@ func (c *timeSyncController) close() {
 }
 
 func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
+	// Security and peer GATT work can use deep C call chains. Run the pump
+	// before entering the larger music/weather/time packet processing frames.
+	c.radio.Service()
 	if c.running {
 		if r, ok := c.radio.(interface{ UpdateBattery(uint8) }); ok {
 			r.UpdateBattery(min(battery, 100))
@@ -68,20 +78,31 @@ func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
 	if c.directMode {
 		return
 	}
+	if c.saving || u.page == pageUpdate || u.page == pageTransfer || u.page == pageTrial || (c.allowPhone != nil && !c.allowPhone()) {
+		c.close()
+		if u.phone != nil {
+			u.phone.clearLink()
+		}
+		return
+	}
+	if u.phoneAuto {
+		if u.phone == nil {
+			u.phone = &phoneState{status: "Waiting for phone"}
+		}
+		u.phone.mode = phoneConnected
+	}
 	weatherOpen := u.page == pageWeatherSync && u.weather != nil && u.weather.open
 	if p := u.phone; p != nil {
-		if weatherOpen || u.sync.Open || u.page == pageUpdate || u.page == pageTrial {
-			if p.mode != phoneOff {
-				p.mode, p.status = phoneOff, "Connection stopped"
-				p.clearLink()
-			}
-		}
 		if p.restart || (c.running && c.phoneMode != p.mode) {
 			c.close()
 			p.clearLink()
 			p.restart = false
 		}
 		if p.mode != phoneOff {
+			u.sync.Cancel()
+			if u.weather != nil {
+				u.weather.open = false
+			}
 			c.updatePhone(u, now, battery)
 			return
 		}
@@ -128,7 +149,6 @@ func (c *timeSyncController) update(u *watchUI, now time.Time, battery uint8) {
 		}
 		c.running = true
 	}
-	c.radio.Service()
 	value, size, age, err := c.radio.Take()
 	if err != nil {
 		c.close()

@@ -8,8 +8,8 @@ type updateFlashAccess struct{ *externalFlash }
 
 func (f updateFlashAccess) ReadAt(p []byte, offset int64) (int, error) {
 	n, err := f.externalFlash.ReadAt(p, offset)
-	// Validation streams the whole image. Pump C host work only after CS is
-	// released so the peer can read progress throughout that operation.
+	// Validation streams the whole image. Service controller timing after CS
+	// is released; host callbacks resume when verification returns to the loop.
 	serviceTimeRadio()
 	return n, err
 }

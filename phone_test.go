@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"github.com/Distortions81/goPine/internal/music"
+	"github.com/Distortions81/goPine/internal/timesync"
 	"testing"
 	"time"
 )
@@ -70,7 +71,7 @@ func (r *fakePhoneRadio) report(link byte, playing bool, generation uint32) {
 func samplePhone(now time.Time) *phoneState {
 	p := &phoneState{mode: phoneSession, expires: now.Add(phoneSessionDuration), status: "Connected"}
 	r := &fakePhoneRadio{}
-	r.report(2, true, 1)
+	r.report(music.LinkMusicReady, true, 1)
 	p.music.Apply(r.value)
 	return p
 }
@@ -80,7 +81,7 @@ func phoneUI(now time.Time, mode phoneMode) watchUI {
 	u.phone.mode, u.phone.expires = mode, now.Add(phoneSessionDuration)
 	return u
 }
-func TestPhoneDefaultsOffAndModesSurviveSleep(t *testing.T) {
+func TestPhoneDefaultsOffAndAutoConnectionSurvivesSleep(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	u := phoneUI(now, phoneOff)
 	r := &fakePhoneRadio{}
@@ -89,38 +90,29 @@ func TestPhoneDefaultsOffAndModesSurviveSleep(t *testing.T) {
 	if r.starts != 0 {
 		t.Fatal("opening music started Bluetooth")
 	}
-	u.page = pagePhone
+	u.openPhone()
 	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 154}, now, firmwareConfirmed, powerStatus{})
 	c.update(&u, now, 73)
-	if r.starts != 1 || r.window != phoneSessionDuration {
-		t.Fatal("session not bounded")
+	if r.starts != 1 || r.window != 0 || !u.phoneAuto {
+		t.Fatal("auto connection not enabled")
 	}
-	for _, pg := range []page{pageMusic, pageClock, pageAlert} {
+	for _, pg := range []page{pageMusic, pageWeather, pageTimeSettings, pageClock, pageAlert} {
 		u.page = pg
 		u.handle(inputEvent{Kind: inputSleep}, now, firmwareConfirmed, powerStatus{})
 		c.update(&u, now.Add(time.Second), 73)
 		if !c.running || r.stops != 0 {
-			t.Fatal("screen state stopped opt-in connection", pg)
+			t.Fatal("screen stopped shared connection", pg)
 		}
-	}
-	c.update(&u, now.Add(phoneSessionDuration), 73)
-	if c.running || r.stops != 1 || u.phone.mode != phoneOff {
-		t.Fatal("session did not expire")
-	}
-	u.page = pagePhone
-	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 202}, now, firmwareConfirmed, powerStatus{})
-	c.update(&u, now, 73)
-	if r.window != 0 || u.phone.mode != phoneConnected {
-		t.Fatal("connected mode")
 	}
 	c.update(&u, now.Add(24*time.Hour), 73)
 	if !c.running {
-		t.Fatal("unbounded mode expired")
+		t.Fatal("auto connection expired")
 	}
-	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 106}, now, firmwareConfirmed, powerStatus{})
+	u.openPhone()
+	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 202}, now, firmwareConfirmed, powerStatus{})
 	c.update(&u, now, 73)
-	if c.running || u.phone.mode != phoneOff {
-		t.Fatal("Off did not stop")
+	if c.running || u.phoneAuto || u.phone.mode != phoneOff {
+		t.Fatal("Off did not stop shared connection")
 	}
 }
 func TestPhoneCommandsAndPeerChange(t *testing.T) {
@@ -128,7 +120,7 @@ func TestPhoneCommandsAndPeerChange(t *testing.T) {
 	u := phoneUI(now, phoneConnected)
 	r := &fakePhoneRadio{}
 	c := timeSyncController{radio: r}
-	r.report(2, true, 1)
+	r.report(music.LinkMusicReady, true, 1)
 	c.update(&u, now, 73)
 	if len(r.commands) != 1 || r.commands[0] != music.Open {
 		t.Fatal("missing refresh hint")
@@ -141,12 +133,12 @@ func TestPhoneCommandsAndPeerChange(t *testing.T) {
 	// A disconnect/reconnect can finish between UI passes. Do not deliver the
 	// old gesture to the new connection, even if it already subscribed again.
 	u.handle(inputEvent{Kind: inputTap, X: 190, Y: 150}, now, firmwareConfirmed, powerStatus{})
-	r.report(2, false, 3)
+	r.report(music.LinkMusicReady, false, 3)
 	c.update(&u, now, 73)
 	if len(r.commands) != 3 || r.commands[2] != music.Open {
 		t.Fatal("replayed gesture across peers", r.commands)
 	}
-	r.report(0, false, 4)
+	r.report(music.LinkDisconnected, false, 4)
 	c.update(&u, now, 73)
 	if music.Text(&u.phone.music.Track) != "" || u.phone.music.Known {
 		t.Fatal("stale metadata survived disconnect")
@@ -164,24 +156,112 @@ func TestPhoneCommandFailureAndWeatherCache(t *testing.T) {
 	a, b := weatherPackets(now)
 	r := &fakePhoneRadio{fakeWeatherRadio: fakeWeatherRadio{packets: [][]byte{a, b}}}
 	c := timeSyncController{radio: r}
-	r.report(2, false, 1)
+	r.report(music.LinkMusicReady, false, 1)
 	c.update(&u, now, 80)
 	if u.weather == nil || !u.weather.cache.HasForecast || u.clock != before || !c.running {
 		t.Fatal("weather interrupted phone/time")
 	}
 	r.commandError = errors.New("full")
+	beforeFrame := u.frameKey(now, powerStatus{})
 	u.handle(inputEvent{Kind: inputTap, X: 60, Y: 200}, now, firmwareConfirmed, powerStatus{})
 	c.update(&u, now, 80)
-	if u.phone.queued || u.phone.status != "Command failed" {
+	if u.phone.queued || u.phone.musicStatus() != "Command failed" || u.phone.status != "Connected" {
 		t.Fatal("command retries not bounded")
+	}
+	if u.frameKey(now, powerStatus{}) == beforeFrame {
+		t.Fatal("music error did not repaint")
+	}
+	u.openPhone()
+	if u.phone.status != "Connected" || !c.running {
+		t.Fatal("music command error changed shared phone status")
 	}
 	r.err = errors.New("radio")
 	c.update(&u, now, 80)
-	if c.running || u.phone.mode != phoneOff || u.phone.music.Link != 0 {
+	if c.running || u.phone.mode != phoneOff || u.phone.music.Link != music.LinkDisconnected || u.phone.musicNote != "" {
 		t.Fatal("error retained connection")
 	}
 }
-func TestPhoneSwitchWaitsForDrainAndExplicitWindowTakesOver(t *testing.T) {
+
+func TestAuthenticatedPhoneWithoutMusicSubscriptionStillReceivesTimeAndWeather(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	u := phoneUI(now, phoneConnected)
+	a, b := weatherPackets(now)
+	r := &fakePhoneRadio{fakeWeatherRadio: fakeWeatherRadio{packets: [][]byte{a, b}}}
+	r.report(music.LinkAuthenticated, false, 1)
+	r.value[82] = 0
+	r.fakeTimeRadio.value, _ = timesync.Encode(now.Add(time.Hour))
+	r.size = 10
+	c := timeSyncController{radio: r}
+	c.update(&u, now, 80)
+	if u.phone.status != "Connected" || !c.running || !u.weather.cache.HasCurrent || !u.weather.cache.HasForecast {
+		t.Fatal("shared connection depends on music subscription")
+	}
+	if !u.clock.Now(now).Equal(now.Add(time.Hour)) || u.phone.musicStatus() != "Open music in app" {
+		t.Fatal("time or music-specific availability incorrect")
+	}
+	u.handle(inputEvent{Kind: inputTap, X: 190, Y: 150}, now, firmwareConfirmed, powerStatus{})
+	c.update(&u, now, 80)
+	if len(r.commands) != 0 || u.phone.queued {
+		t.Fatal("sent a media command without subscription")
+	}
+}
+
+func TestSecuringPhoneDoesNotClaimConnectedOrEnableMusic(t *testing.T) {
+	now := time.Now()
+	u := phoneUI(now, phoneConnected)
+	r := &fakePhoneRadio{}
+	r.report(music.LinkSecuring, true, 1)
+	c := timeSyncController{radio: r}
+	c.update(&u, now, 80)
+	u.handle(inputEvent{Kind: inputTap, X: 190, Y: 150}, now, firmwareConfirmed, powerStatus{})
+	c.update(&u, now, 80)
+	if u.phone.status != "Securing connection" || u.phone.queued || len(r.commands) != 0 || u.phone.music.Known {
+		t.Fatal("unsecured connection appears ready")
+	}
+}
+
+func TestMusicUnsubscribePreservesPhoneAndDropsPendingCommand(t *testing.T) {
+	now := time.Now()
+	u := phoneUI(now, phoneConnected)
+	r := &fakePhoneRadio{}
+	c := timeSyncController{radio: r}
+	r.report(music.LinkMusicReady, true, 1)
+	c.update(&u, now, 80)
+	u.handle(inputEvent{Kind: inputTap, X: 190, Y: 150}, now, firmwareConfirmed, powerStatus{})
+	r.report(music.LinkAuthenticated, true, 1)
+	c.update(&u, now, 80)
+	if !c.running || u.phone.status != "Connected" || u.phone.queued || u.phone.announced || len(r.commands) != 1 {
+		t.Fatal("unsubscribe disconnected phone or replayed queued music command")
+	}
+	r.report(music.LinkMusicReady, true, 1)
+	c.update(&u, now, 80)
+	if len(r.commands) != 2 || r.commands[1] != music.Open || r.starts != 1 || r.stops != 0 {
+		t.Fatal("resubscribe did not refresh over the same phone connection")
+	}
+}
+
+func TestMusicRefreshFailureStaysLocalAndDoesNotRetryContinuously(t *testing.T) {
+	now := time.Now()
+	u := phoneUI(now, phoneConnected)
+	r := &fakePhoneRadio{commandError: errors.New("queue full")}
+	r.report(music.LinkMusicReady, false, 1)
+	c := timeSyncController{radio: r}
+	c.update(&u, now, 80)
+	if u.phone.status != "Connected" || u.phone.musicStatus() != "Refresh failed" || !u.phone.announced {
+		t.Fatal("refresh failure changed shared connection status")
+	}
+	r.commandError = nil
+	c.update(&u, now.Add(time.Second), 80)
+	if len(r.commands) != 0 {
+		t.Fatal("automatically retried failed refresh")
+	}
+	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 85}, now, firmwareConfirmed, powerStatus{})
+	c.update(&u, now, 80)
+	if len(r.commands) != 1 || r.commands[0] != music.Open || u.phone.musicNote != "" || u.phone.status != "Connected" {
+		t.Fatal("manual retry did not clear local error")
+	}
+}
+func TestPhoneSwitchWaitsForDrainAndWeatherSharesConnection(t *testing.T) {
 	now := time.Now()
 	u := phoneUI(now, phoneSession)
 	r := &fakePhoneRadio{}
@@ -201,8 +281,8 @@ func TestPhoneSwitchWaitsForDrainAndExplicitWindowTakesOver(t *testing.T) {
 	u.openWeather()
 	u.handle(inputEvent{Kind: inputTap, X: 180, Y: 210}, now, firmwareConfirmed, powerStatus{})
 	c.update(&u, now, 73)
-	if u.phone.mode != phoneOff || !c.weatherMode || r.window != weatherWindow {
-		t.Fatal("explicit weather takeover")
+	if u.phone.mode != phoneConnected || c.weatherMode || r.starts != 2 || r.stops != 1 || u.page != pageWeather {
+		t.Fatal("weather restarted shared connection")
 	}
 }
 func TestPhoneSessionExpiresInSleepingProductionLoop(t *testing.T) {
@@ -249,16 +329,17 @@ func TestPhoneStripPixelsAndFrameKeys(t *testing.T) {
 	}
 }
 
-func TestPhoneSessionRenewalRestartsRadioDeadline(t *testing.T) {
+func TestRepeatedConnectDoesNotRestartSharedRadio(t *testing.T) {
 	now := time.Now()
-	u := phoneUI(now, phoneSession)
+	u := phoneUI(now, phoneOff)
+	u.openPhone()
 	r := &fakePhoneRadio{}
 	c := timeSyncController{radio: r}
-	c.update(&u, now, 73)
-	u.page = pagePhone
-	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 154}, now.Add(time.Minute), firmwareConfirmed, powerStatus{})
-	c.update(&u, now.Add(time.Minute), 73)
-	if r.starts != 2 || r.stops != 1 || r.window != phoneSessionDuration || !u.phone.expires.Equal(now.Add(11*time.Minute)) {
-		t.Fatal("renewed UI retained old radio expiry")
+	for i := 0; i < 3; i++ {
+		u.handle(inputEvent{Kind: inputTap, X: 120, Y: 154}, now.Add(time.Duration(i)*time.Minute), firmwareConfirmed, powerStatus{})
+		c.update(&u, now.Add(time.Duration(i)*time.Minute), 73)
+	}
+	if r.starts != 1 || r.stops != 0 || r.window != 0 || !u.phoneAuto {
+		t.Fatal("repeated Connect reset shared connection")
 	}
 }

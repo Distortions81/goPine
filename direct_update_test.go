@@ -35,8 +35,10 @@ type fakeUpdateRadio struct {
 	packet     [200]byte
 	kind, size int
 	status     [16]byte
+	hostPumps  int
 }
 
+func (r *fakeUpdateRadio) Service()                { r.hostPumps++ }
 func (r *fakeUpdateRadio) StartUpdate(uint8) error { r.starts++; return nil }
 func (r *fakeUpdateRadio) TakeUpdate() ([200]byte, int, int) {
 	k, n := r.kind, r.size
@@ -67,6 +69,24 @@ func directFixture() (*watchUI, *directUpdater, *fakeUpdateRadio, *fakeUpdateFla
 	reboots := new(int)
 	d := &directUpdater{sync: c, openFlash: func() (updateFlash, error) { return f, nil }, confirmed: func() bool { return true }, powerOK: func() bool { return true }, reboot: func() error { *reboots++; return nil }}
 	return &u, d, radio, f, reboots
+}
+
+func TestDirectUpdateDefersHostCallbacksToMainLoop(t *testing.T) {
+	u, d, r, _, _ := directFixture()
+	now := time.Now()
+	d.tick(u, now, powerStatus{Percent: 80})
+	if r.hostPumps != 0 {
+		t.Fatal("update handler entered Bluetooth host callbacks")
+	}
+	d.sync.update(u, now, 80)
+	if r.hostPumps != 1 || !d.sync.directMode {
+		t.Fatal("shallow main-loop pump did not preserve the update session")
+	}
+	r.control(1, 42, 1000)
+	d.tick(u, now, powerStatus{Percent: 80})
+	if r.hostPumps != 1 || u.transfer.phase != updateReceiving {
+		t.Fatal("queued OTA packet was not handled independently of host dispatch")
+	}
 }
 func TestDirectUpdateRequiresLocalInstallAndLeavesTrial(t *testing.T) {
 	u, d, r, f, reboots := directFixture()

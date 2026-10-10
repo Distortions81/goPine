@@ -63,6 +63,36 @@ func (u *watchUI) receiveNotifications(r timeRadio, now time.Time) {
 	}
 }
 
+//go:noinline
+func (u *watchUI) receiveAppleNotifications(r timeRadio, now time.Time) {
+	source, ok := r.(interface {
+		TakeAppleNotification() ([notifications.ApplePacket]byte, int)
+	})
+	if !ok {
+		return
+	}
+	for i := 0; i < 3; i++ { // Session clear plus the two newest transport records.
+		packet, size := source.TakeAppleNotification()
+		if size <= 0 {
+			break
+		}
+		if size != len(packet) {
+			continue
+		}
+		if u.notifications == nil {
+			if packet[4] >= 2 {
+				continue
+			}
+			u.notifications = &notificationState{}
+		}
+		n := u.notifications
+		_, buzz := n.inbox.ApplyApple(packet[:])
+		if buzz && !n.quiet && !u.timers.active && (n.lastBuzz.IsZero() || now.Sub(n.lastBuzz) >= notificationBuzzGap) {
+			n.lastBuzz, n.buzzUntil = now, now.Add(notificationPulse)
+		}
+	}
+}
+
 func (u *watchUI) notificationVibrating(now time.Time) bool {
 	n := u.notifications
 	if n == nil {
@@ -110,12 +140,6 @@ func (u *watchUI) handleNotifications(e inputEvent, state updateState) {
 		return
 	}
 	switch {
-	case inRect(e, 166, 0, 240, 42):
-		if u.phone == nil {
-			u.phone = &phoneState{status: "Bluetooth off"}
-		}
-		u.phone.fromInbox = true
-		u.page = pagePhone
 	case inRect(e, 12, 42, 114, 74):
 		n.quiet = !n.quiet
 		n.buzzUntil = time.Time{}
@@ -184,7 +208,6 @@ func (u *watchUI) drawNotifications(d canvas) {
 	}
 	if u.page == pageInbox {
 		centered(d, &uifont.Bold18, 29, "INBOX", white)
-		writeLine(d, &uifont.Regular18, 177, 29, "LINK", accent)
 		label, c := "BUZZ ON", card
 		if n.quiet {
 			label, c = "QUIET", positive
@@ -193,8 +216,8 @@ func (u *watchUI) drawNotifications(d canvas) {
 		clockControl(d, 126, 42, 102, 32, "CLEAR", card)
 		if n.inbox.Count == 0 {
 			centered(d, &uifont.Regular18, 117, "No messages", white)
-			centered(d, &uifont.Regular18, 150, "Use LINK to connect", muted)
-			centered(d, &uifont.Regular18, 179, "Android companion", muted)
+			centered(d, &uifont.Regular18, 150, "Settings > Phone", muted)
+			centered(d, &uifont.Regular18, 179, "iPhone or Android", muted)
 			centered(d, &uifont.Regular18, 222, "Cleared on restart", muted)
 			return
 		}

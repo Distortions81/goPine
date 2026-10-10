@@ -10,6 +10,7 @@ import pathlib
 import re
 import subprocess
 import tempfile
+from ble_crypto_sources import prepare_crypto
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
@@ -37,9 +38,8 @@ def main():
     cmake=(vendor/'src/CMakeLists.txt').read_text()
     section=cmake.split('set(NIMBLE_SRC',1)[1].split(')',1)[0]
     sources=list(dict.fromkeys(vendor/'src'/s for s in re.findall(r'libs/[^\s]+\.c',section) if '/npl/freertos/' not in s))
-    sources=[s for s in sources if s.name not in ('ble_hs_stop.c', 'ble_store_ram.c')]
-    sources += [nimble/'porting/nimble/src/nimble_port.c',port/'npl.c',port/'service.c',port/'alloc.c',port/'stop.c',port/'bond.c',port/'bond_flash.c']
-    sources += [nimble/'ext/tinycrypt/src'/name for name in ('aes_encrypt.c', 'utils.c', 'cmac_mode.c', 'ecc.c', 'ecc_dh.c')]
+    sources=[s for s in sources if s.name not in ('ble_hs_stop.c', 'ble_store_ram.c', 'ble_sm.c', 'ble_gatts.c')]
+    sources += [nimble/'porting/nimble/src/nimble_port.c',port/'npl.c',port/'service.c',port/'ancs.c',port/'alloc.c',port/'stop.c',port/'sm.c',port/'gatts.c',port/'bond.c',port/'bond_flash.c',port/'privacy.c']
     include=[port/'include',libc_config,nimble/'porting/nimble/include',nimble/'nimble/include',
              nimble/'nimble/host/include',nimble/'nimble/controller/include',
              nimble/'nimble/host/src',
@@ -57,6 +57,7 @@ def main():
     # Never reuse archive members from an older source list or publish a
     # partially built archive. This folder contains only generated objects.
     with tempfile.TemporaryDirectory(prefix='nimble-',dir=out) as temp:
+        sources += prepare_crypto(nimble, pathlib.Path(temp))
         objects=[]
         for i,source in enumerate(sources):
             obj=pathlib.Path(temp)/f'{i}.o'

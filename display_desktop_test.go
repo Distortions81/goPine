@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Distortions81/goPine/internal/music"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -87,7 +88,18 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		power powerStatus
 	}{
 		{"pairing-code", watchUI{page: pagePhone, pairing: &pairingState{code: 12346}}, powerStatus{Percent: 73}},
+		{"pairing-code-waiting", watchUI{page: pagePhone, pairing: &pairingState{code: 12346, progress: 0x200}}, powerStatus{Percent: 73}},
+		{"pairing-code-checking", watchUI{page: pagePhone, pairing: &pairingState{code: 12346, progress: 0x285}}, powerStatus{Percent: 73}},
+		{"pairing-identity", watchUI{page: pagePhone, pairing: &pairingState{code: 12346, progress: 0x514}}, powerStatus{Percent: 73}},
+		{"pairing-stage-timeout", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 0, diagnostic: 13, progress: 0x200}}, powerStatus{Percent: 73}},
 		{"pairing-saved", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 2}}, powerStatus{Percent: 73}},
+		{"pairing-unknown", watchUI{page: pagePairingSettings, pairing: &pairingState{status: -2}}, powerStatus{Percent: 73}},
+		{"pairing-empty", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 0}}, powerStatus{Percent: 73}},
+		{"pairing-forgotten", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 0, note: "Forget watch on phone too"}}, powerStatus{Percent: 73}},
+		{"pairing-saving", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 1}}, powerStatus{Percent: 73}},
+		{"pairing-error", watchUI{page: pagePairingSettings, pairing: &pairingState{status: -1}}, powerStatus{Percent: 73}},
+		{"pairing-timeout", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 0, diagnostic: 0x2080000}}, powerStatus{Percent: 73}},
+		{"pairing-wrong-code", watchUI{page: pagePairingSettings, pairing: &pairingState{status: 2, diagnostic: 0x2130404}}, powerStatus{Percent: 73}},
 		{"display-flipped", watchUI{page: pageDisplaySettings, flipScreen: true}, powerStatus{Percent: 73}},
 		{"clock", watchUI{page: pageClock}, powerStatus{Percent: 73}},
 		{"clock-charging", watchUI{page: pageClock}, powerStatus{Percent: 68, State: chargeCharging}},
@@ -111,8 +123,12 @@ func TestDesktopControlsAndRendering(t *testing.T) {
 		{"error", watchUI{page: pageMessage, message: "Recovery setup failed. Check power and use wired setup again."}, powerStatus{Percent: 73}},
 		{"apps", watchUI{page: pageApps}, powerStatus{Percent: 73}},
 		{"music", watchUI{page: pageMusic, phone: samplePhone(now)}, powerStatus{Percent: 73}},
-		{"phone", watchUI{page: pagePhone, phone: samplePhone(now)}, powerStatus{Percent: 73}},
+		{"phone", watchUI{page: pagePhone, phoneAuto: true, phone: &phoneState{mode: phoneConnected, status: "Connected", music: music.State{Link: music.LinkAuthenticated}}}, powerStatus{Percent: 73}},
+		{"phone-securing", watchUI{page: pagePhone, phoneAuto: true, phone: &phoneState{mode: phoneConnected, status: "Securing connection", music: music.State{Link: music.LinkSecuring}}}, powerStatus{Percent: 73}},
+		{"phone-off", watchUI{page: pagePhone, phone: &phoneState{status: "Bluetooth off"}}, powerStatus{Percent: 73}},
 		{"music-off", watchUI{page: pageMusic, phone: &phoneState{status: "Bluetooth off"}}, powerStatus{Percent: 73}},
+		{"music-unsubscribed", watchUI{page: pageMusic, phone: &phoneState{mode: phoneConnected, status: "Connected", music: music.State{Link: music.LinkAuthenticated}}}, powerStatus{Percent: 73}},
+		{"music-error", watchUI{page: pageMusic, phone: &phoneState{mode: phoneConnected, status: "Connected", musicNote: "Command failed", music: music.State{Link: music.LinkMusicReady}}}, powerStatus{Percent: 73}},
 		{"inbox", watchUI{page: pageInbox, notifications: sampleNotifications()}, powerStatus{Percent: 73}},
 		{"inbox-empty", watchUI{page: pageInbox, notifications: &notificationState{}}, powerStatus{Percent: 73}},
 		{"notification", watchUI{page: pageNotification, notifications: sampleNotifications()}, powerStatus{Percent: 73}},

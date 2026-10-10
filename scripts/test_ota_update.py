@@ -3,6 +3,7 @@
 import binascii
 import hashlib
 import http.client
+import io
 import json
 import pathlib
 import re
@@ -13,6 +14,7 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 import zipfile
+from contextlib import redirect_stdout
 
 import ota_upload as upload
 import ota_update as updater
@@ -73,19 +75,71 @@ class PackageTests(unittest.TestCase):
 
 class ProtocolTests(unittest.TestCase):
     def setUp(self):
+        class Timeout(Exception):
+            pass
+        class EndOfFile(Exception):
+            pass
         class Base:
             def _wait_and_parse_notify(s): return s.response
         fake = types.SimpleNamespace(BleDfuControllerLegacy=Base, Procedures=types.SimpleNamespace(
             ACTIVATE_IMAGE_AND_RESET=5, RECEIVE_FIRMWARE_IMAGE=3, PACKET_RECEIPT_NOTIFICATION=17, VALIDATE_FIRMWARE=4))
-        self.patcher = patch.multiple(upload, legacy=fake, array_to_hex_string=lambda xs: ''.join(f'{x:02x}' for x in xs), create=True)
+        self.patcher = patch.multiple(upload, legacy=fake,
+            pexpect=types.SimpleNamespace(TIMEOUT=Timeout, EOF=EndOfFile),
+            array_to_hex_string=lambda xs: ''.join(f'{x:02x}' for x in xs), create=True)
         self.patcher.start();self.addCleanup(self.patcher.stop)
         self.sender = object.__new__(upload.sender_type())
         self.sender.validated = self.sender.activation_sent = self.sender.transfer_started = False
         self.sender.ctrlpt_handle = 12
         self.sender.sent_bytes = 200
+        self.sender.target_mac = 'C9:9E:15:7A:69:B5'
         self.sender.ble_conn = Mock()
         self.writes=[]
         self.sender.ble_conn.sendline.side_effect = self.writes.append
+
+    def test_connection_prompt_timeout_never_sends_connect_or_firmware(self):
+        self.sender.ble_conn.before = b''
+        self.sender.ble_conn.expect.side_effect = upload.pexpect.TIMEOUT('private exception dump')
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertFalse(self.sender.scan_and_connect(timeout=12))
+        self.assertEqual(self.writes, [])
+        self.assertFalse(self.sender.transfer_started)
+        self.assertIn('timed out while waiting for the gatttool prompt', self.sender.connection_failure)
+        self.assertIn('No gatttool output', self.sender.connection_failure)
+        self.assertNotIn('private exception dump', self.sender.connection_failure)
+        self.assertNotIn(self.sender.target_mac, output.getvalue())
+        self.sender.ble_conn.expect.assert_called_once_with(rb'\[LE\]>', timeout=12)
+
+    def test_connection_failure_retains_bounded_sanitized_reason_without_retry(self):
+        for exception, outcome in [(upload.pexpect.TIMEOUT, 'timed out'), (upload.pexpect.EOF, 'gatttool exited')]:
+            with self.subTest(outcome=outcome):
+                self.writes.clear()
+                self.sender.ble_conn.expect.reset_mock()
+                self.sender.ble_conn.expect.side_effect = [0, exception('private exception dump')]
+                self.sender.ble_conn.before = (b'x' * 5000 + b'\x1b[31m[C9:9E:15:7A:69:B5][LE]>'
+                    b'\x1b[0m \x1b]52;clipboard-secret\x07' + b' aabb' * 2 + b' ' + b'abcdef01' * 20 +
+                    b'\r\nError: connect error: Connection refused (111)\x00\r\n')
+                with redirect_stdout(io.StringIO()):
+                    self.assertFalse(self.sender.scan_and_connect(timeout=12))
+                detail = self.sender.connection_failure
+                self.assertIn(f'{outcome} while connecting to the recovery watch', detail)
+                self.assertIn('Connection refused (111)', detail)
+                self.assertIn('[watch address removed]', detail)
+                self.assertIn('[hex data omitted]', detail)
+                self.assertLess(len(detail), 650)
+                for hidden in [self.sender.target_mac, '\x1b', '\x00', '\n', 'clipboard-secret', 'abcdef01' * 20]:
+                    self.assertNotIn(hidden, detail)
+                self.assertEqual(self.writes, ['connect'])
+                self.assertEqual(self.sender.ble_conn.expect.call_count, 2)
+                self.assertFalse(self.sender.transfer_started)
+
+    def test_successful_connection_preserves_single_connection_sequence(self):
+        self.sender.connection_failure = 'previous failure'
+        with redirect_stdout(io.StringIO()):
+            self.assertTrue(self.sender.scan_and_connect(timeout=12))
+        self.assertIsNone(self.sender.connection_failure)
+        self.assertEqual(self.writes, ['connect'])
+        self.assertEqual([call.kwargs for call in self.sender.ble_conn.expect.call_args_list], [{'timeout': 12}, {'timeout': 12}])
+        self.assertFalse(self.sender.transfer_started)
 
     def test_activation_requires_successful_matching_validation(self):
         with self.assertRaises(RuntimeError): self.sender._dfu_send_command(5)

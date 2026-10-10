@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Distortions81/goPine/internal/music"
 	"github.com/Distortions81/goPine/internal/notifications"
 	"github.com/Distortions81/goPine/internal/uifont"
 )
@@ -65,7 +66,7 @@ func TestNotificationControllerBoundedAndOptIn(t *testing.T) {
 		t.Fatal("received while off")
 	}
 	u.phone.mode = phoneConnected
-	r.report(1, false, 1) // No music subscription is required for notifications.
+	r.report(music.LinkAuthenticated, false, 1) // No music subscription is required for notifications.
 	c.update(&u, now, 80)
 	if r.takes != 2 || u.notifications.inbox.Count != 2 || !u.notificationVibrating(now) {
 		t.Fatal("bounded receipt")
@@ -103,12 +104,8 @@ func TestNotificationNavigationAndStableSelection(t *testing.T) {
 		t.Fatal("opening inbox should leave radio off")
 	}
 	u.handle(inputEvent{Kind: inputTap, X: 200, Y: 25}, now, firmwareConfirmed, powerStatus{})
-	if u.page != pagePhone || u.phone.mode != phoneOff {
-		t.Fatal("link entry")
-	}
-	u.back(firmwareConfirmed)
-	if u.page != pageInbox {
-		t.Fatal("link back destination")
+	if u.page != pageInbox || u.phone != nil {
+		t.Fatal("Inbox must not contain a pairing entry")
 	}
 	n := sampleNotifications()
 	u.notifications = n

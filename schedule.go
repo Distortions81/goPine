@@ -54,6 +54,12 @@ func nextLoopDelay(now time.Time, u *watchUI, nextPower time.Time, awake bool) t
 	if u.phone != nil && u.phone.mode == phoneSession {
 		schedule.by(u.phone.expires)
 	}
+	if u.phone != nil && u.phone.mode != phoneOff && now.Before(u.phone.retryAt) {
+		schedule.by(u.phone.retryAt)
+	}
+	if u.phoneSetupActive(now) {
+		schedule.by(u.phone.setupUntil)
+	}
 	u.scheduleTimers(&schedule, awake)
 	if u.page == pageTransfer && u.transfer != nil && u.transfer.open {
 		schedule.by(u.transfer.expires)

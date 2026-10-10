@@ -1,9 +1,9 @@
 # InfiniTime-compatible Bluetooth OTA
 
 goPine uses the existing **MCUboot image + Nordic Legacy DFU ZIP** format.
-The last confirmed installed version is 0.3.14, with successful boot and KEEP.
-A local 0.3.15 image completed direct transfer and on-watch verification; boot and
-KEEP for that build remain unconfirmed. Recovery remains available through the
+The last confirmed installed version is the local 0.3.19 candidate, with
+successful boot and KEEP on 2026-10-10. Phone pairing still needs hardware validation.
+Recovery remains available through the
 bootloader for older firmware, emergencies and existing phone DFU clients.
 
 ## Update inside goPine (0.3.13 and newer)
@@ -706,6 +706,122 @@ pending, so the last confirmed installed version is still 0.3.14. Follow
 The published release is rebuilt from its tagged source commit. Its package
 checksum is recorded in the release assets; the local checksum above identifies
 only the earlier hardware-transfer test.
+
+### Published 0.3.16 — recovery validated; boot/KEEP confirmed
+
+On 2026-10-09, the TP-Link adapter on hci1 sent the published 277,588-byte
+0.3.16 application through InfiniTime recovery in 3 minutes 7 seconds. The
+watch reported successful firmware validation and the host sent activation/reset.
+The reset acknowledgment was unavailable; no retry was attempted. The user
+confirmed successful boot and tapped KEEP on 2026-10-09. The confirmed installed
+firmware is now 0.3.16. This does not yet verify the Chrome/Linux in-app update
+path or phone pairing on 0.3.16.
+
+Package: `build/ota/release-0.3.16/gopine-dfu-0.3.16.zip`; SHA-256:
+`cdfe5dcd4d5faa71fad52dc8951f92b232161e3520c9cd0103bbb7b777e23674`.
+Log: `build/ota/upload-0.3.16-20261009-225044-234692.log`.
+Two earlier attempts failed before firmware was sent. A short LE discovery
+confirmed the recovery identity and Legacy DFU service before the successful
+connection; goPine's **Ready to connect** screen is the separate in-app service.
+
+### Local 0.3.17 — recovery validated; boot/KEEP confirmed
+
+On 2026-10-10, the TP-Link adapter on hci1 sent the 279,724-byte local 0.3.17
+application through InfiniTime recovery in 3 minutes 13 seconds. The receiver
+reported successful firmware validation and the uploader sent activation/reset.
+The reset acknowledgment was unavailable; no retry was attempted.
+The user confirmed successful boot and tapped KEEP on 2026-10-10, establishing
+0.3.17 as the installed version. They subsequently reported a crash before the
+pairing code appeared on the first attempt and incomplete pairing after code
+entry on the second. Phone pairing, automatic time, weather delivery,
+reconnect behavior, and battery consumption remain hardware checks.
+
+Package: `build/ota/gopine-dfu-0.3.17.zip`; SHA-256:
+`078ce945e7b78d304f0849735616b2a9824e825b7c805865961c566695028270`.
+Log: `build/ota/upload-0.3.17-20261010-001042-172389.log`.
+Earlier direct-mode scans sent no firmware. After the user restarted the watch,
+BlueZ identified its separate recovery address and Legacy DFU service; the
+uploader verified that service again before sending the package.
+
+### Local 0.3.18 — recovery validated; boot/KEEP confirmed
+
+The local 285,476-byte 0.3.18 candidate adds an ANCS client for iPhone alerts,
+puts pairing only in Settings → Phone, and defers Bluetooth host callbacks out
+of rendering and feature packet frames. Race tests, vet, eleven C sanitizer
+suites, resource checks, rendering checks, and the full BLE OTA build passed.
+Offline package validation passed. On 2026-10-10, the TP-Link adapter on hci1
+transferred all 285,476 bytes through InfiniTime recovery in 3 minutes 15 seconds.
+Receiver firmware validation succeeded and activation/reset was sent. The reset
+acknowledgment was unavailable; no retry followed activation. The user confirmed
+successful boot and KEEP, establishing 0.3.18 as the installed version.
+Log: `build/ota/upload-0.3.18-20261010-010754-272165.log`.
+A preceding recovery connection timed out before sending firmware; restarting
+recovery allowed the successful attempt above.
+Log: `build/ota/upload-0.3.18-20261010-010550-759108.log`.
+The direct upload attempt on 2026-10-10 used the earlier 285,428-byte candidate
+(SHA-256 `e1ad3d624a606e668e9bd4f41a25b196f2153ce805f1b1a4e5ebf750da27961b`).
+It disconnected repeatedly during service
+discovery and sent no firmware. The user confirmed that the watch rebooted when
+the uploader connected. That attempt stopped; recovery is needed to install the
+candidate without using the installed application's failing connection path.
+The user then requested fixing the problem before flashing. Investigation
+reproduced invalid GATT state on the second host start. The rebuilt candidate
+registers its fixed service database once and preserves it across host restarts; its
+real-host sanitizer test passes 100 discovery cycles and 10 phone passkey/update
+handoffs. The firmware updater's nested full-host pump was also removed.
+Log: `build/ota/upload-0.3.18-20261010-003848-546655.log`.
+See [candidate notes and hardware acceptance](releases/0.3.18.md).
+
+Rebuilt package: `build/ota/gopine-dfu-0.3.18.zip` (214,055 bytes); SHA-256:
+`b933f263acfac64ff2cfe116b9941829e813d100caa33ae0fab9ccdd8454fef5`.
+
+After boot/KEEP, the user reported stalled pairing, a short-lived code/iPhone
+prompt after clearing saved pairing, and quick sleep in Phone setup. The local
+0.3.19 follow-up keeps setup awake for two minutes and defers settings-save
+disconnects before and during security negotiation. Race tests, vet, the BLE
+firmware build and resource gate pass. The first 0.3.19 attempt incorrectly used
+recovery while the watch was already on goPine's Ready to connect screen. It
+timed out before any firmware was sent. After the user clarified the mode, the
+in-app uploader transferred all 285,916 bytes and the watch verified the image.
+The user confirmed INSTALL, successful boot and KEEP on 2026-10-10, establishing
+0.3.19 as the installed baseline. Direct transfer log:
+`build/ota/upload-0.3.19-20261010-012727-648045.log`.
+The unnecessary recovery attempt is recorded in:
+Log: `build/ota/upload-0.3.19-20261010-012610-244656.log`.
+Package: `build/ota/gopine-dfu-0.3.19.zip` (214,325 bytes); image 285,916 bytes;
+SHA-256: `be1884213f30830e26bd1f5849beab787d052208058b239a6fbd2c72d9291606`.
+See [0.3.19 validation and remaining hardware checks](releases/0.3.19.md).
+AGENTS.md records that update requests mean goPine is already ready, recovery is
+only a fallback, and no routine boot/KEEP confirmation question should follow.
+
+The user subsequently reported that 0.3.19 still slept quickly during setup and
+lost the pairing code/iPhone prompt. The prepared 0.3.20 candidate fixes a
+reproduced missing handoff from queued Bluetooth host events to the main loop
+and renews Phone setup visibility after waking. It also services controller work
+during key calculation and retains Phone INFO failure details. The latest build
+also restores controller phone identity keys and address resolution after reset;
+real-host tests cover eight private-address
+reconnects and a rejected controller restore without extra flash writes.
+It also enables the GATT client operations accidentally disabled with the central
+radio role, allowing the ANCS client to discover and subscribe to phone services.
+Real host/GATT notification lifecycle tests pass; physical iOS remains untested.
+Package: `build/ota/gopine-dfu-0.3.20.zip` (218,087 bytes); image
+291,252 bytes; SHA-256:
+`4aed1febc7350dc9fd2c3611f0ffeebbe3395afe8c4766823d59548da7dd1692`.
+See [0.3.20 tests and hardware limits](releases/0.3.20.md). The installed baseline
+last confirmed with boot/KEEP remains 0.3.19. No compression or new transport is
+included in this follow-up.
+
+On 2026-10-10, a bounded TP-Link scan found the configured watch advertising
+goPine Update. The prepared direct uploader then sent all 291,252 bytes of
+0.3.20 on `hci1`; the watch verified the complete image and offered INSTALL.
+Log: `build/ota/upload-0.3.20-20261010-023723-130669.log`. Approximately 6 minutes
+19 seconds elapsed from log creation through receiver validation, with no
+transfer retry shown. This is a measurement of the 0.3.19 receiver; the new
+receiver's speed is not measured yet. The user was instructed to tap INSTALL,
+then KEEP. Installation, boot/KEEP and InfiniLink pairing have not been reported;
+receiver validation does not prove those outcomes. No routine confirmation
+question follows the update, as requested in AGENTS.md.
 
 <!-- recovery-reference -->
 ## Recovery reference: red, green and blue

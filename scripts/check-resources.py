@@ -22,6 +22,25 @@ SAVE = "(*github.com/Distortions81/goPine/internal/checkpoint.Journal).save"
 RESERVE = 2048
 PORT_ISR = "gopine_port_interrupt"
 INPUT_VECTORS = "main.inputVectors"
+BLE_CRYPTO_FRAMES = (
+    "gopine_ble_poll", "pump", "ble_hs_process_rx_data_queue", "ble_hs_rx_data",
+    "ble_hs_hci_evt_acl_process", "ble_l2cap_rx", "ble_sm_rx",
+    "ble_sm_process_result", "ble_sm_sc_public_key_rx", "ble_sm_sc_public_key_exec",
+    "ble_sm_sc_ensure_keys_generated", "ble_sm_alg_gen_key_pair", "uECC_make_key",
+    "EccPoint_compute_public_key", "ble_sm_alg_gen_dhkey", "uECC_shared_secret",
+    "EccPoint_mult", "ble_ll_conn_event_end", "ble_ll_conn_next_event",
+    "ble_ll_sched_conn_reschedule", "ble_ll_conn_end",
+)
+
+
+def parse_c_frames(text):
+    frames = {}
+    for line in text.splitlines():
+        match = re.fullmatch(r".*:\d+:([^\t]+)\t(\d+)\tstatic", line)
+        if match:
+            name, size = match.groups()
+            frames[name] = max(frames.get(name, 0), int(size))
+    return frames
 
 
 def parse_symbols(text):
@@ -63,7 +82,7 @@ def stack_table(text):
     return struct.unpack("<I", data)[0]
 
 
-def audit(symbols, by_address, task_stack):
+def audit(symbols, by_address, task_stack, c_frames=None):
     def frame(name, required=True):
         if name not in symbols:
             if required:
@@ -87,20 +106,37 @@ def audit(symbols, by_address, task_stack):
     paths = {
         "initialization": base + frame("main.openApplication", False) + frame("main.buildClockTime"),
         "timer": live + sizes[TICK] + frame("(*main.watchUI).loadRuntime", False) + calendar,
-        "settings_save": live + callback + sizes[FLUSH] + max(sizes[SAVE], snapshot + calendar),
+        "settings_save": live + callback + frame("(*main.timeSyncController).saveSettings", False) + frame("(*main.settingsPersistence).update", False) + sizes[FLUSH] + max(sizes[SAVE], snapshot + calendar),
         "input": live + frame("(*main.watchUI).handle", False) + callback,
         "frame_change": live + frame("main.changedStrips", False),
         "phone_update": live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updatePhone", False) + max(frame("(main.pineTimeRadio).TakeMusic", False), frame("(main.pineTimeRadio).TakeWeather", False)),
+        "bluetooth_host": live + frame("(*main.timeSyncController).update", False) + frame("(main.pineTimeRadio).Service", False),
+        "apple_notification_update": live + frame("(*main.watchUI).receiveAppleNotifications", False) + max(frame("(main.pineTimeRadio).TakeAppleNotification", False), frame("(*github.com/Distortions81/goPine/internal/notifications.Inbox).ApplyApple", False)),
         "notification_update": live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updatePhone", False) + frame("(*main.watchUI).receiveNotifications", False) + max(frame("(main.pineTimeRadio).TakeNotification", False), frame("(*github.com/Distortions81/goPine/internal/notifications.Inbox).Add", False)),
         "weather_update": live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updateWeather", False) + frame("(main.pineTimeRadio).TakeWeather", False),
         "pairing_update": live + frame("(*main.timeSyncController).updatePairing", False) + frame("(main.pineTimeRadio).ForgetPhone", False),
         "render": live + frame("(*main.frameRenderer).renderStrips", False) + frame("(*main.watchLoop).run$1", False),
     }
+    phone = live + frame("(*main.timeSyncController).update", False) + frame("(*main.timeSyncController).updatePhone", False)
+    paths["phone_preflight_save"] = live + callback + sizes[FLUSH] + max(sizes[SAVE], snapshot + calendar)
+    paths["phone_time"] = phone + frame("(*main.timeSyncController).receivePhoneTime", False) + max(
+        frame("(main.pineTimeRadio).Take", False), frame("github.com/Distortions81/goPine/internal/timesync.Decode", False),
+        frame("github.com/Distortions81/goPine/internal/timesync.Normalize", False))
     verify = frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Verify", False) + frame("github.com/Distortions81/goPine/internal/ota.Validate", False)
     paths["direct_update"] = live + frame("(*main.directUpdater).tick", False) + max(
         frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Write", False),
         frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Begin", False) + frame("github.com/Distortions81/goPine/internal/ota.checkErasedTrailer", False), verify)
     paths["direct_install"] = live + callback + frame("(*main.directUpdater).install", False) + frame("(*github.com/Distortions81/goPine/internal/ota.Receiver).Commit", False) + verify
+    crypto_frames = {}
+    if c_frames is not None:
+        for name in BLE_CRYPTO_FRAMES:
+            if name not in c_frames:
+                raise ValueError(f"Required BLE C frame missing: {name}")
+            crypto_frames[name] = c_frames[name]
+        # Conservative selected path: sum both key-generation and ECDH
+        # alternatives, plus another pump for the controller service point.
+        # Retain the general reserve for unlisted callees and interrupts.
+        paths["pairing_crypto_controller"] = paths["bluetooth_host"] + sum(crypto_frames.values()) + c_frames["pump"]
     heap = symbols["_heap_end"] - symbols["_heap_start"]
     errors = []
     port_frame = frame(PORT_ISR)
@@ -137,6 +173,7 @@ def audit(symbols, by_address, task_stack):
         "frames_bytes": sizes,
         "callback_frame_budget_bytes": callback,
         "core_path_frames_bytes": paths,
+        "pairing_crypto_c_frames_bytes": crypto_frames,
         "errors": errors,
         "limitation": "Selected-path regression budgets, not full call-graph bounds or measured free heap.",
     }
@@ -146,6 +183,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--ble-stack-usage", type=Path)
     args = parser.parse_args()
 
     def output(tool, *options):
@@ -154,7 +192,8 @@ def main():
     symbols = parse_symbols(output("llvm-nm", "--numeric-sort"))
     frames = parse_frames(output("llvm-dwarfdump", "--debug-frame"))
     stack = stack_table(output("llvm-objdump", "-s", "-j", ".tinygo_stacksizes"))
-    result = audit(symbols, frames, stack)
+    c_frames = parse_c_frames(args.ble_stack_usage.read_text()) if args.ble_stack_usage else None
+    result = audit(symbols, frames, stack, c_frames)
     result["elf"] = str(args.elf)
     if args.report:
         args.report.write_text(json.dumps(result, indent=2) + "\n")

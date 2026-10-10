@@ -35,10 +35,6 @@ func (u *watchUI) handleClockTap(e inputEvent, now time.Time) {
 			u.beginClockEdit(pageSetDate, now)
 		case inRect(e, 16, 134, 224, 174):
 			u.use24 = !u.use24
-		case inRect(e, 16, 180, 224, 220):
-			u.sync.Start(now)
-			u.syncStatus = ""
-			u.page = pageTimeSync
 		}
 		return
 	}
@@ -120,7 +116,7 @@ func (u *watchUI) drawClockSettings(d canvas, now time.Time) {
 			label = "FORMAT: 24 HOUR"
 		}
 		clockControl(d, 16, 134, 208, 40, label, card)
-		clockControl(d, 16, 180, 208, 40, "SYNC TIME", positive)
+		centered(d, &uifont.Regular18, 207, "Auto sync with phone", muted)
 		return
 	}
 	title := "SET TIME"

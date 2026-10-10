@@ -61,10 +61,29 @@ int main(void) {
     ble_npl_eventq_init(&host);
     ble_npl_eventq_init(&controller);
     gopine_ble_set_host_queue(&host);
+    assert(!gopine_ble_host_work_pending());
     ble_npl_event_init(&disconnected, disconnect_callback, NULL);
     ble_npl_event_init(&command, controller_callback, NULL);
     ble_npl_callout_init(&host_timeout, &host, disconnect_callback, NULL);
     ble_npl_sem_init(&ack, 0);
+    ble_npl_eventq_put(&host,&disconnected);
+    test_primask=1;
+    assert(gopine_ble_host_work_pending() && test_primask==1);
+    test_primask=0;
+    command_active=true;
+    gopine_ble_controller_pump();
+    assert(host_runs==0 && !ble_npl_eventq_is_empty(&host));
+    assert(gopine_ble_host_work_pending()); // Wait must yield, not spin until UI refresh.
+    command_active=false;
+    gopine_ble_pump();assert(host_runs==1);
+    assert(!gopine_ble_host_work_pending());
+    ble_npl_callout_reset(&host_timeout,1000);
+    assert(!gopine_ble_host_work_pending());
+    test_rtc0.COUNTER+=32768;
+    assert(gopine_ble_host_work_pending()); // Includes due host timers before pumping.
+    ble_npl_callout_stop(&host_timeout);
+    assert(!gopine_ble_host_work_pending());
+    host_runs=0;
     for (int i=0; i<3; i++) {
         ble_npl_eventq_put(&controller, &command);
         ble_npl_callout_reset(&host_timeout, 0);

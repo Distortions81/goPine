@@ -1,29 +1,69 @@
-# Experimental PineTime phone radio
+# PineTime phone radio
 
 This port is compiled only with `pinetime && bletime && !provision`.
-It provides one unauthenticated connection, CTS, a standard Battery Service for
-InfiniLink connection-state compatibility, bounded time/weather/media state, and
-InfiniTime-compatible music controls and an ANS notification receiver. ANCS,
-pairing, bonding and Nordic Legacy DFU remain unimplemented. Candidate 0.3.13
-adds a custom direct-update receiver; legacy clients still use recovery. Time sync uses an explicit five-minute
-window with on-watch confirmation. Phone mode is Off by default; the local 0.3.9
-candidate adds explicit ten-minute or persistent connections that survive screen
-sleep. See [phone behavior and wire details](../../docs/time.md#phone-connections-and-music-candidate-039).
+It provides one connection, authenticated passkey pairing and a saved phone bond,
+CTS, a standard Battery Service for InfiniLink connection-state compatibility,
+bounded time/weather/media state, InfiniTime-compatible music controls, an ANS
+notification receiver, an iOS ANCS client, and a custom direct-update receiver. Apple AMS and
+Nordic Legacy DFU inside goPine remain unimplemented; legacy DFU clients use
+InfiniTime recovery.
 
-The 0.3.8 candidate additionally exposes InfiniTime Simple Weather Service
+Current source targets **0.3.21**, a prepared candidate following the
+receiver-verified **0.3.20** upload. The user reported code entry without a saved
+phone or completed pairing. The new PIN/INFO stage display reads the pinned
+host's active security procedure after dispatch unwinds; it exports only a
+phase and completed passkey-round count, retains the last phase on failure,
+and introduces no logging buffer. ATT feature writes now check encryption,
+authentication and 16-byte keys independently of the still-pending identity
+exchange. Feature delivery, Connected status, ANCS and music commands still
+wait for a completed bond; pending data is cleared on security failure.
+**0.3.19**,
+which was installed with boot/KEEP confirmed on 2026-10-10 but still failed
+phone pairing. The new port returns input waits to the main loop immediately
+when host events are queued or host timers are due. It also renews the setup
+window after waking Phone. Earlier **0.3.18** also booted and accepted KEEP on
+2026-10-10 but showed stalled pairing and brief code/phone prompts.
+The follow-up keeps setup visible for two minutes
+and defers settings-save disconnects before and during security negotiation.
+Phone pairing still needs hardware validation. **Settings → Phone** owns a
+shared connection for time, weather, music, and notifications. The candidate
+also services controller work inside ECC scalar multiplication; InfiniTime
+handles it with a higher-priority controller task. Phone → INFO retains the last
+SMP/HCI error across retries. Its auto-connect
+preference persists across confirmed boots; new and older settings default to
+Off. Screen sleep and app navigation preserve the connection. The companion
+still decides whether to reconnect. See [phone setup and compatibility](../../docs/pairing.md)
+and [candidate validation](../../docs/releases/0.3.21.md).
+
+The fixed 87-byte internal snapshot distinguishes disconnected, securing,
+authenticated without music, and music-ready states. Shared Phone status does
+not depend on a music subscription; media commands still require one. Music
+errors are local to that screen instead of replacing the connection status.
+
+All incoming phone-feature writes require an encrypted, authenticated
+connection with a 16-byte key. Automatic CTS uses a fixed ten-byte mailbox with
+connection, generation, and receipt time. Permissions are checked both before
+queuing and when consuming; stale, disconnected, or unauthenticated data cannot
+become a trusted clock update. Go validates the date and adjusts for delivery
+age. Resent time within two seconds of an already synchronized clock does not
+cause another clock edit. The separate explicit five-minute time session retains
+its on-watch proposal and confirmation flow.
+
+The port exposes InfiniTime Simple Weather Service
 `00050000-78fc-48fe-8e23-433b3a1942d0`, with writable characteristic `00050001`.
-Weather writes are enabled in an explicit 60-second Weather update window or
-during an opted-in phone connection.
+The candidate's Weather screen uses the shared Phone connection, which
+accepts weather throughout the session. The transport also retains its legacy
+explicit 60-second weather window.
 Two fixed mailboxes hold the latest current/forecast record (maximum 53 bytes
 each). Complete mbuf chains are copied; transport lengths and versions are
 checked before queuing, and Go validates records before replacing the cache.
-CTS writes during this window receive a transport ACK but do not change time,
+CTS writes during the legacy window receive a transport ACK but do not change time,
 create a time proposal or terminate weather transfer. Both valid records end the
 standalone weather session (not a phone connection); the final write ACK retains the existing 200 ms shutdown grace.
 
-Candidate 0.3.11 exposes ANS `0x1811`, writable New Alert `0x2a46`, using
+ANS `0x1811` exposes writable New Alert `0x2a46`, using
 InfiniTime's three-byte companion header and at most 100 bytes of text.
-Only opted-in phone mode accepts notifications. A two-slot, 103-byte-per-slot
+Only authenticated phone mode accepts notifications. A two-slot, 103-byte-per-slot
 mailbox copies complete mbuf chains, keeps the newest two packets on overflow,
 and is cleared at connection changes/Stop/Start. Oversized writes are truncated
 with an ellipsis; undersized writes are rejected. The Go loop drains at most two
@@ -32,7 +72,25 @@ Mailbox work participates in the existing interrupt/deadline wake path, adding
 no periodic poll. No notification response/call-control characteristic is exposed.
 See [inbox behavior](../../docs/time.md#notification-inbox-candidate-0311).
 
-## Direct firmware update (candidate 0.3.13)
+The ANCS GATT client is separate from that ANS server. It discovers the iPhone's
+Generic Attribute service and subscribes to Service Changed, then discovers ANCS,
+subscribes to Data Source before Notification Source, and reads title/message
+attributes through Control Point. Only authenticated, bonded 16-byte encrypted
+links can start discovery or supply content. Procedures advance from the shallow
+host poll after callbacks unwind; epochs reject callbacks from replaced sessions.
+Four queued UIDs, a 151-byte fragmented response, and two 147-byte output records
+bound storage. Invalid UID errors skip vanished messages; malformed/timeout
+streams stop until service change or reconnect to prevent stale attributes being
+assigned to a later UID. Missing/unauthorized services retry at 30-second
+deadlines up to three times, then wait for Service Changed or reconnect.
+No ANCS notification actions or Apple AMS media client are implemented.
+The radio remains a GAP peripheral. `port/config.h` explicitly enables the four
+required GATT client discovery/write operations, whose upstream defaults follow
+the disabled central radio role. Without these overrides, service discovery
+returns `BLE_HS_ENOTSUP`; the client added in 0.3.18 could not deliver ANCS.
+See [Apple's ANCS specification](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Specification/Specification.html).
+
+## Direct firmware update
 
 An explicit watch-side hold opens a separate ten-minute inactivity window.
 Advertising names the watch `goPine Update` and exposes service
@@ -46,8 +104,9 @@ Only the inactive application slot is written. Image validation streams through
 MCUboot header/vector/SHA-256 checks. No BLE operation activates the image;
 local Install rechecks power and integrity, then writes trial boot magic last.
 Cancel invalidates an uncertain commit before returning to Settings. A running
-trial cannot open update mode. [Protocol and usage](../../docs/ota.md#update-inside-gopine-candidate-0313)
-include the still-pending hardware checks.
+trial cannot open update mode. Update screens temporarily take ownership of the
+radio; enabled phone auto-connect resumes after leaving them. See
+[protocol and usage](../../docs/ota.md#update-inside-gopine-candidate-0313).
 
 ## Reproducible candidate build
 
@@ -60,13 +119,13 @@ git clone https://github.com/InfiniTimeOrg/InfiniTime.git build/deps/InfiniTime
 git -C build/deps/InfiniTime checkout --detach 6c119eb52206b580b556b41633dddc1e1b66a8da
 tinygo build -target=./targets/pinetime-gopine.json -o build/plain-check.elf .
 # The plain build initializes TinyGo's generated libc headers.
-INFINITIME_SOURCE=build/deps/InfiniTime bash scripts/build-ota.sh --ble 0.3.0
+INFINITIME_SOURCE=build/deps/InfiniTime bash scripts/build-ota.sh --ble 0.3.18
 ```
 
 `TINYGO=/path/to/tinygo` and `TZ=your/timezone` are supported. The script rebuilds
 the archive on every BLE package build, checks the source revision/cleanliness
 and TinyGo version, and atomically replaces the archive only on success.
-The resulting `build/ota/gopine-dfu-0.3.0.zip` is for **existing MCUboot OTA only**.
+The resulting `build/ota/gopine-dfu-0.3.18.zip` is for **existing MCUboot OTA only**.
 Never use a standalone/bootloader image for this test. The ordinary build does
 not include this experimental radio backend and will report Bluetooth unavailable.
 
@@ -91,35 +150,54 @@ small compatibility shims do not copy InfiniLink's GPL implementation.
   dispatch from reentering termination before its outstanding count is updated.
   Stop completion defers controller/host reset until the outer poll returns
   from host dispatch.
-- The host is not initialized until Sync Time, Weather Update, Firmware Update, or an explicit phone connection. Shutdown disables advertising,
+- The host starts for an explicit foreground session or enabled phone auto-connect
+  after a confirmed boot. Shutdown disables advertising,
   terminates the peer, resets the controller scheduler, disables the PHY/RNG,
   and releases the radio HFXO request. It allows 200ms to send a time-write ACK
   and at most 500ms for graceful disconnect. RTC0 bookkeeping remains available
   for subsequent starts. Off never reconnects. Enabled phone mode advertises at 100–150 ms intervals
   initially, then 1–1.5 seconds after 30 seconds or disconnect.
+- Pending settings saves temporarily stop the shared phone session. Internal
+  flash programming waits until both the controller and its asynchronous
+  disconnect are idle; auto-connect resumes after the save. Opt-in is saved before
+  first starting BLE when storage and fresh power checks allow it. Saves are
+  coalesced, and shutdown progress supplies wakeups instead of a polling loop.
+  Hardware testing must verify these transitions with real phone traffic.
 - This HFXO policy depends on the audited TinyGo PineTime runtime/SPI driver not
   owning another HFXO request. Re-audit if adding another crystal consumer.
-  The 0.3.9 candidate enables NimBLE RF management with InfiniTime's 1,500 µs
+  NimBLE RF management uses InfiniTime's 1,500 µs
   startup allowance. The RF manager now owns requests around controller events;
   the old unconditional session-start HFXO request is removed. Verify this on
   hardware before assuming any connected-idle power improvement.
 - The CPU waits on queue/callout deadlines and IRQs. The final interrupt-masked
   WFE handoff rechecks NPL queues so already-dispatched IRQ work cannot be lost.
   This retains the single Go application task assumption.
+- The unused accelerometer and heart-rate sensor remain powered down. This
+  candidate adds no motion notifications or sensor polling to drive companion
+  weather refresh; InfiniLink background weather is consequently limited.
 - The pinned host's stop counter survives a disconnect timeout. `port/stop.c`
   wraps that implementation to reset the count on each new stop; completed
   shutdown also clears stale host GAP records after resetting the controller.
 - Invariant failure resets the application; MCUboot and recovery are unchanged.
   Check initial boot before KEEP. Settings require KEEP, so radio tests then
   rely on the existing recovery path rather than automatic trial rollback.
+- The pinned GATT start consumes service definitions and reallocates its ATT
+  pool. Starting it again without clearing the old list leaves invalid entries
+  and no registered services. `port/gatts.c` registers the fixed database once
+  and preserves ATT memory, service entries and CCCD pools across subsequent
+  host starts. Per-connection CCCDs are still released on disconnect through
+  normal upstream cleanup. Resource counts and handles remain stable.
+  This defect reproduced on the second host start in the integration test.
 
 ## Verification and limits
 
-Host Go tests cover no radio starts without opt-in, repeated sessions, cancellation,
-sleep, expiry, bad payloads, delayed approval, InfiniLink calendar compatibility,
+Host Go tests cover saved opt-in, shared navigation, authenticated phone-time
+handling, repeated sessions, cancellation, sleep, expiry, bad payloads, delayed
+approval, InfiniLink calendar compatibility, settings-save shutdown and resume,
 and strip-rendering equivalence. Python tests cover the PC wire format, immediate
-connection using the discovered device, and bounded retries before writing only. C arena
-NPL queue/callout deadlines, and bounded weather/music mailboxes run under
+connection using the discovered device, and bounded retries before writing only.
+C arena, NPL queue/callout deadlines, phone permissions/time mailboxes, and bounded
+weather/music mailboxes run under
 address/undefined-behavior sanitizers. These
 do **not** simulate the nRF radio or prove event deadlines on the watch.
 
@@ -128,35 +206,98 @@ heap-region floor, and 2,880-byte display strip. See [performance](../../docs/pe
 for versioned measurements. Runtime stack/heap peaks and current still need
 hardware measurements; successful builds are not proof of headroom under traffic.
 
-Before calling this ready for normal use, test on the watch:
+The local 0.3.18 BLE build, race-enabled Go tests, eleven C sanitizer suites, and
+real-host integration test passed. The latter uses a simulated HCI controller
+with the real pinned host, production service/allocator/NPL/GATT/security code:
+100 update discovery cycles and ten phone public-key/passkey/update handoffs.
+The 0.3.20 extension completes 20-round passkey pairing, DHKey checks, LTK
+encryption, identity distribution, pre-pairing CCCD persistence under the peer's
+permanent identity, flash-journal reload and authenticated bonded reconnect.
+A bad confirm verifies failure reporting. Trusted time/weather/music/ANS writes
+are exercised before and after eight private-address reconnects. The test now
+runs actual host startup, including controller reset and identity-key restore;
+a rejected restore retains the bond for retry. Reconnects add no flash writes.
+The peer server in `tests/host_ancs.h` answers actual GATT client ATT requests:
+Data-before-Source subscriptions, immediate notifications, fragmented attributes,
+removals, Service Changed confirmation, disappearance/republication, and a
+denied-sharing retry preserving battery/weather are exercised across reconnects.
+This test failed with the previous disabled GATT client configuration.
+`testdata/infinilink_wire.json` supplies shared source-derived synthetic
+calendar/weather/music/alert values. The test script generates a temporary C
+header from them; the real-host test checks exact mailbox bytes and outbound
+music control notifications, including stale-generation rejection. Go's
+`companion_wire_test.go` separately checks those values reach the clock, cache,
+music and inbox through one phone connection. They are not captured iOS traffic.
+Controller events execute inside ECC service points while host callbacks stay
+deferred. Firmware and tests
+use the same generated crypto source from `scripts/ble_crypto_sources.py`:
+a fixed hook at each scalar bit and unsigned conversions for two upstream AES
+byte shifts that would otherwise fail UBSan. Cryptographic inputs and math are
+unchanged; no debug keys are enabled and vendor source files remain intact.
+Run `python3 scripts/test-ble-host.py --infinitime build/deps/InfiniTime`.
+It does not test the nRF controller/IRQs, an actual iOS bond or Go stacks.
+The updater defers full host processing to the shallow main-loop pump as well.
+Pending host work must make HasUpdate true: merely preventing WFE does not
+return the input wait to that pump. The 0.3.20 regression clears application
+snapshots, queues real HCI connection/ATT/SMP packets, runs only the controller,
+and verifies this handoff before dispatching the host. The earlier wake policy
+fails that regression. NPL tests also cover due host timers and IRQ mask state.
+Recovery transfer, receiver validation, boot and KEEP are confirmed; this
+candidate has not been published. Before
+calling the new phone behavior ready for normal use, test on the watch:
 
-1. No advertisement with phone mode Off and no explicit update window; matching CTS advertisement during it.
-2. PC write, visible correct proposal, no change before ACCEPT; Back rejects it.
-3. With InfiniLink Developer → Force ANCS off, the app reaches Connected, reads
-   the live battery level, and sends a usable time (test installed app version).
-4. For bounded time/weather windows, no connection after Back, sleep or expiry;
-   for phone mode, preserve screen-off connections until Off or session expiry;
-   check sleep current returns to baseline and repeat opening the window.
+1. No advertisement with phone mode Off and no explicit foreground session;
+   enable auto-connect and verify its setting survives a confirmed reboot.
+2. Valid time from the paired phone applies automatically; invalid or
+   unauthenticated time must not change the clock.
+3. With InfiniLink Force ANCS on and iOS notification sharing allowed, the app reaches Connected, reads
+   the live battery level, pairs, and sends usable automatic time, weather, and
+   music data. Record the installed companion version.
+4. Preserve screen-off phone connections and resume after settings
+   saves/update cancellation. Verify Off survives reboot and releases the radio.
 5. Touch, clock progression and display remain responsive during BLE traffic.
-6. Confirm/reboot, then OTA entry/rollback still work; check memory/IRQ stack use.
+6. Confirm/reboot, then OTA entry/rollback still work; check memory/IRQ stack use
+   and measure sleep current with Bluetooth Off, connected, and out of range.
 
-The 0.2.5 advertisement was detected once on the watch; later discovery failed
-even with its countdown running. Source inspection identified the missing HFXO
-restart above. After a watch reboot, the automated PC sender delivered time
-successfully and the user confirmed the sync worked on 2026-10-05. Version
-0.2.6 includes the restart repair and longer window. The 0.2.7 candidate adds
-InfiniLink's expected Battery Service and an on-watch reminder that Force ANCS
-must be off. Repeated windows and InfiniLink remain unverified.
+The PC sender delivered time successfully after a watch reboot on 2026-10-05.
+That earlier check and the confirmed 0.3.18 boot do not validate 0.3.18 phone
+reconnects, background delivery, or the previously reported connected shutdown
+crash. Those remain on-device checks.
 
 
-## Pairing (candidate 0.3.15)
+## Pairing and phone permissions
 
 LE Secure Connections only, display-only passkey authentication, bonding,
 controller encryption and privacy are enabled. TinyCrypt AES/CMAC/P-256 sources
-come from the same pinned vendor tree. Battery reads require encryption, so the
-companion's normal read can initiate pairing without advertising ANCS support.
+come from the same pinned vendor tree. Normal phone Battery reads require
+encryption, so the companion's read can initiate pairing without advertising
+ANCS support. Automatic CTS and all other incoming phone-feature writes also
+require authentication and bonding; an ATT security error lets the central
+secure the link and retry its operation. During the explicit firmware-update
+window, Battery reads may be unencrypted so Linux's automatic battery probe does
+not initiate pairing that update mode rejects. Local notification reads preserve
+the normal Battery notification path.
 One bond and four CCCDs are retained; repeat pairing does not silently delete
-keys. Phone → PAIR → Forget Phone stops the radio before clearing storage.
+keys. Phone → INFO → Forget Phone stops the radio before clearing storage.
+
+The pinned security manager omits the fresh-bond result flag and updates the
+peer identity only after its encryption callback. `port/sm.c` wraps that exact
+source without modifying the vendor checkout. It forwards encryption callbacks
+once, then saves pre-pairing CCCDs after both key stores succeed for the same
+authenticated peer identity. This avoids saving subscriptions under a temporary
+private address. Failure and restored-encryption paths keep their upstream
+behavior. The sanitizer regression runs the pinned key-exchange, result, GAP,
+and GATT paths through first pairing and subscription restoration. The full
+host test executes the pinned cryptography with a simulated central; it does
+not execute the nRF radio or an iOS pairing exchange.
+
+`port/privacy.c` restores controller peer identity keys after host sync, matching
+the side effect of InfiniTime's `RestoreBond` peer-key writes. Journal reload
+restores host memory before startup, so controller reset otherwise loses those
+keys. Address resolution is explicitly re-enabled because the pinned host's
+cached local IRK can survive stop/start and skip that step. This replay does not
+write the flash journal. Controller failures prevent advertising and survive in
+Phone INFO; the existing saved pairing remains available for a later retry.
 
 The existing upstream RAM store supplies key lookup semantics. A separate
 512-byte snapshot journal occupies only internal page 0x7d000. Records contain
@@ -171,6 +312,8 @@ schema and provide migration before changing that layout.
 
 C ASan/UBSan tests exercise host-queue deferral, all journal write cutoffs, key/
 CCCD reload and Forget. The archive build emits build/ble/stack-usage.txt for C
-frame inspection; this is not a whole-program stack proof. On-device pairing,
-RPA reconnect, reboot persistence and connected shutdown remain unverified.
-See [test procedure](../../docs/pairing.md). ANCS is not implemented.
+frame inspection; this is not a whole-program stack proof. Candidate on-device
+pairing, RPA reconnect, reboot persistence, and connected shutdown remain unverified.
+See [test procedure](../../docs/pairing.md). ANCS host tests cover discovery,
+subscription order, all short response split points, full-size fragmented text,
+burst bounds, vanished UIDs, session reset/stale callbacks, and deadline wrap.

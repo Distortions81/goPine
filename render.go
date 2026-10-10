@@ -47,6 +47,11 @@ func changedStrips(previous, next *frameKey) uint32 {
 		before.step = next.step
 		top = updateCounterBaseline + int(lo)
 		bottom = max(updateCounterBaseline+int(hi), updateProgressY+3)
+	case pagePairing:
+		before.syncSecond = next.syncSecond
+		lo, hi = uifont.Regular18.VerticalBounds()
+		top = pairingStageBaseline + int(lo)
+		bottom = pairingStageBaseline + int(hi)
 	default:
 		return allStrips
 	}

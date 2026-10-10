@@ -6,15 +6,16 @@ import "time"
 // Hardware actions and time are injected so tests can advance through sleeping,
 // input, radio activity, and alarms without waiting for wall time to pass.
 type watchLoop struct {
-	display  clockDisplay
-	ui       *watchUI
-	sync     *timeSyncController
-	renderer *frameRenderer
-	updater  *directUpdater
-	now      func() time.Time
-	state    func() updateState
-	action   func(uiAction)
-	save     func(time.Time, powerStatus) time.Time
+	display    clockDisplay
+	ui         *watchUI
+	sync       *timeSyncController
+	renderer   *frameRenderer
+	updater    *directUpdater
+	now        func() time.Time
+	state      func() updateState
+	action     func(uiAction)
+	save       func(time.Time, powerStatus) time.Time
+	beforeSync func(time.Time)
 }
 
 func (l *watchLoop) run() error {
@@ -53,13 +54,17 @@ func (l *watchLoop) run() error {
 		if l.updater != nil {
 			l.updater.tick(l.ui, now, power)
 		}
+		if l.beforeSync != nil {
+			l.beforeSync(now)
+		}
 		l.sync.update(l.ui, now, power.Percent)
+		l.ui.receiveAppleNotifications(l.sync.radio, now)
 		if l.sync.updatePairing(l.ui) {
 			if err := wakeAlert(); err != nil {
 				return err
 			}
 		}
-		if l.ui.pairingVisible() || l.ui.sync.Open || l.ui.timers.active || (l.ui.weather != nil && l.ui.weather.open) || (l.ui.page == pageTransfer && l.ui.transfer != nil && l.ui.transfer.open) {
+		if l.ui.pairingVisible() || l.ui.phoneSetupVisible(now) || l.ui.sync.Open || l.ui.timers.active || (l.ui.weather != nil && l.ui.weather.open) || (l.ui.page == pageTransfer && l.ui.transfer != nil && l.ui.transfer.open) {
 			l.display.KeepAwake()
 		}
 		notificationBuzz := l.ui.notificationVibrating(now)
@@ -113,9 +118,15 @@ func (l *watchLoop) run() error {
 		}
 		if event.Kind == inputSleep {
 			awake = false
+			if p := l.ui.phone; p != nil {
+				p.setupUntil, p.setupRequested = time.Time{}, false
+			}
 		}
 		if event.Kind == inputWake {
 			awake, painted = true, false
+			if (l.ui.page == pagePhone || l.ui.page == pagePairingSettings) && l.ui.phone != nil {
+				l.ui.phone.setupRequested = true
+			}
 			power = l.display.PowerStatus()
 			nextPower = now.Add(powerPollInterval)
 			l.renderer.invalidate()

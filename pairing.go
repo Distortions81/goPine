@@ -10,11 +10,22 @@ type pairingRadio interface {
 	BondStatus() int
 	ForgetPhone() error
 }
+
+const pairingStageBaseline = 174
+
 type pairingState struct {
 	code                    uint32 // code + 1, so 000000 remains valid
 	status                  int
 	cancel, forget, confirm bool
 	note                    string
+	diagnostic              uint32
+	progress                uint16
+}
+
+func forgettableBond(status int) bool {
+	// A storage failure can be recovered by clearing the bond journal. Unknown,
+	// absent, or still-saving bonds must never expose an erase action.
+	return status == 2 || status == -1
 }
 
 func (u *watchUI) pairingVisible() bool {
@@ -43,7 +54,26 @@ func (c *timeSyncController) updatePairing(u *watchUI) bool {
 		p = &pairingState{}
 		u.pairing = p
 	}
+	previousStatus := p.status
+	p.status = r.BondStatus()
+	if diagnostic, ok := c.radio.(interface{ PairingDiagnostics() uint32 }); ok {
+		p.diagnostic = diagnostic.PairingDiagnostics()
+	}
+	if progress, ok := c.radio.(interface{ PairingProgress() uint16 }); ok {
+		p.progress = progress.PairingProgress()
+	}
+	if p.status == 2 && previousStatus != 2 {
+		p.note = ""
+	}
+	if !forgettableBond(p.status) {
+		p.confirm = false
+		if p.forget {
+			p.forget = false
+			p.note = ""
+		}
+	}
 	if p.cancel || p.forget {
+		u.phoneAuto = false
 		c.close()
 		u.sync.Cancel()
 		if u.weather != nil {
@@ -63,11 +93,12 @@ func (c *timeSyncController) updatePairing(u *watchUI) bool {
 				p.note = "Forget watch on phone too"
 			}
 			p.forget = false
+			p.status = r.BondStatus()
 		}
 		return false
 	}
 	changed := p.code != code && code != 0
-	p.code, p.status = code, r.BondStatus()
+	p.code = code
 	if changed {
 		u.cancelHold()
 		u.powerNotice = false
@@ -88,10 +119,10 @@ func (u *watchUI) handlePairingSettings(e inputEvent) {
 	p := u.pairing
 	if e.Kind == inputSwipeRight || (e.Kind == inputTap && inRect(e, 0, 0, 60, 44)) {
 		p.confirm = false
-		u.page = pagePhone
+		u.openPhone()
 		return
 	}
-	if e.Kind == inputTap && inRect(e, 16, 170, 224, 220) {
+	if e.Kind == inputTap && inRect(e, 16, 170, 224, 220) && forgettableBond(p.status) {
 		if p.confirm {
 			p.forget = true
 			p.confirm = false
@@ -112,13 +143,14 @@ func (u *watchUI) drawPairing(d canvas) {
 		code /= 10
 	}
 	centered(d, &uifont.Bold24, 143, string(digits[:]), accent)
+	centered(d, &uifont.Regular18, pairingStageBaseline, pairingStageText(u.pairing.progress), muted)
 	clockControl(d, 16, 188, 208, 44, "CANCEL", card)
 }
 func (u *watchUI) drawPairingSettings(d canvas, now time.Time) {
 	_ = now
 	p := u.pairing
 	centered(d, &uifont.Bold18, 29, "PAIRING", white)
-	status := "Connect to check pairing"
+	status := "Pairing not checked"
 	switch p.status {
 	case -1:
 		status = "Pairing storage error"
@@ -130,10 +162,108 @@ func (u *watchUI) drawPairingSettings(d canvas, now time.Time) {
 		status = "Phone pairing saved"
 	}
 	centered(d, &uifont.Regular18, 80, status, accent)
-	centered(d, &uifont.Regular18, 115, p.note, muted)
+	if p.diagnostic != 0 {
+		centered(d, &uifont.Regular18, 115, pairingFailureText(p.diagnostic), muted)
+		centered(d, &uifont.Regular18, 147, pairingDiagnosticCodes(p.diagnostic), muted)
+		if !forgettableBond(p.status) {
+			centered(d, &uifont.Regular18, 185, pairingStageText(p.progress), muted)
+			centered(d, &uifont.Regular18, 212, "Use CONNECT PHONE", muted)
+			return
+		}
+	} else {
+		if !forgettableBond(p.status) {
+			if p.status == 1 {
+				centered(d, &uifont.Regular18, 120, "Please wait", muted)
+			} else if p.note == "Forget watch on phone too" {
+				centered(d, &uifont.Regular18, 120, "Forget this watch in", muted)
+				centered(d, &uifont.Regular18, 147, "your phone settings", muted)
+				centered(d, &uifont.Regular18, 185, "Use CONNECT PHONE", muted)
+				centered(d, &uifont.Regular18, 212, "to pair again", muted)
+			} else {
+				text := "Use CONNECT PHONE"
+				if p.progress != 0 {
+					text = pairingStageText(p.progress)
+				}
+				centered(d, &uifont.Regular18, 120, text, muted)
+				centered(d, &uifont.Regular18, 147, "on the Phone screen", muted)
+				note := p.note
+				if note == "" {
+					note = "Then pair in your app"
+				}
+				centered(d, &uifont.Regular18, 185, note, muted)
+			}
+			return
+		}
+		note := p.note
+		if note == "" && p.status == 2 {
+			note = "Shared by all apps"
+		}
+		centered(d, &uifont.Regular18, 115, note, muted)
+	}
 	label := "FORGET PHONE"
+	if p.status == -1 {
+		label = "RESET PAIRING"
+	}
 	if p.confirm {
 		label = "TAP TO CONFIRM"
 	}
 	clockControl(d, 16, 170, 208, 50, label, card)
+}
+
+func pairingStageText(progress uint16) string {
+	switch progress >> 8 {
+	case 1:
+		return "Starting pairing"
+	case 2:
+		if progress&255 == 0 {
+			return "Waiting for phone code"
+		}
+		return "Checking code " + decimal(int(progress&31)) + "/20"
+	case 3:
+		return "Verifying secure key"
+	case 4:
+		return "Enabling encryption"
+	case 5:
+		return "Exchanging identity"
+	case 6:
+		return "Pairing completed"
+	default:
+		return "Waiting for phone"
+	}
+}
+
+// NimBLE keeps local SMP, peer SMP and HCI errors in distinct namespaces.
+// Retain their numbers alongside a short explanation for hardware diagnosis.
+func pairingFailureText(value uint32) string {
+	security, disconnected := uint16(value), uint16(value>>16)
+	if security != 0 {
+		switch security {
+		case 0x404, 0x504:
+			return "Code did not match"
+		case 0x405, 0x505:
+			return "Phone rejected pairing"
+		case 19: // BLE_HS_ETIMEOUT_HCI
+			return "BLE command timed out"
+		case 13: // BLE_HS_ETIMEOUT
+			return "Pairing timed out"
+		case 0x207:
+			return "Bluetooth setup failed"
+		default:
+			return "Pairing failed"
+		}
+	}
+	switch disconnected {
+	case 0x208:
+		return "Connection timed out"
+	case 0x205, 0x206:
+		return "Saved key rejected"
+	case 0x213:
+		return "Phone disconnected"
+	default:
+		return "Connection interrupted"
+	}
+}
+
+func pairingDiagnosticCodes(value uint32) string {
+	return "S " + decimal(int(uint16(value))) + " / D " + decimal(int(value>>16))
 }

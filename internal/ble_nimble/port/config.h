@@ -8,6 +8,13 @@
 #define NIMBLE_CFG_HOST 1
 #define MYNEWT_VAL_BLE_ROLE_CENTRAL 0
 #define MYNEWT_VAL_BLE_ROLE_OBSERVER 0
+// GAP peripheral and GATT client are independent roles. NimBLE defaults these
+// client operations to BLE_ROLE_CENTRAL; ANCS consumes the phone's services on
+// our existing peripheral connection, without scanning or initiating links.
+#define MYNEWT_VAL_BLE_GATT_DISC_SVC_UUID 1
+#define MYNEWT_VAL_BLE_GATT_DISC_ALL_CHRS 1
+#define MYNEWT_VAL_BLE_GATT_DISC_ALL_DSCS 1
+#define MYNEWT_VAL_BLE_GATT_WRITE 1
 #define MYNEWT_VAL_BLE_MAX_CONNECTIONS 1
 #define MYNEWT_VAL_BLE_HS_AUTO_START 0
 // Match InfiniTime: let the controller release HFXO between radio events.

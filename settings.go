@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Distortions81/goPine/internal/checkpoint"
+	"github.com/Distortions81/goPine/internal/music"
 )
 
 const settingsSaveDelay = 2 * time.Second
@@ -19,7 +20,7 @@ func calendarMillis(local time.Time) int64 {
 }
 
 func (u *watchUI) settings() checkpoint.Settings {
-	s := checkpoint.Settings{CountdownSeconds: uint32(u.timers.countdown.preset / time.Second), TouchWake: u.touchWake, FlipScreen: u.flipScreen}
+	s := checkpoint.Settings{CountdownSeconds: uint32(u.timers.countdown.preset / time.Second), TouchWake: u.touchWake, FlipScreen: u.flipScreen, PhoneAuto: u.phoneAuto}
 	for i, a := range u.timers.alarms {
 		s.Alarms[i] = checkpoint.Alarm{Hour: uint8(a.hour), Minute: uint8(a.minute), Repeat: uint8(a.repeat), Enabled: a.enabled}
 	}
@@ -227,6 +228,7 @@ func loadSettings(u *watchUI, now time.Time, j *checkpoint.Journal) *settingsPer
 			u.use24 = r.Use24
 			u.touchWake = r.Settings.TouchWake
 			u.flipScreen = r.Settings.FlipScreen
+			u.phoneAuto = r.Settings.PhoneAuto
 			for i, a := range r.Settings.Alarms {
 				u.timers.alarms[i] = alarm{hour: int(a.Hour), minute: int(a.Minute), repeat: alarmRepeat(a.Repeat), enabled: a.Enabled}
 			}
@@ -293,4 +295,35 @@ func (p *settingsPersistence) flush(u *watchUI, now time.Time, allowed bool) boo
 	p.observed.capture(u)
 	u.settingsNote = ""
 	return true
+}
+
+// Internal flash programming must wait for the physical radio, including its
+// asynchronous disconnect, to stop. A persistent phone link briefly yields to
+// a coalesced settings save and then reconnects with the same saved bond.
+func (c *timeSyncController) saveSettings(u *watchUI, p *settingsPersistence, now time.Time, allowed bool) time.Time {
+	p.update(u, now, false)
+	securing := u.phone != nil && u.phone.music.Link == music.LinkSecuring
+	canPause := c.phoneMode != phoneOff && !c.directMode && !u.pairingVisible() &&
+		!u.phoneSetupActive(now) && !securing
+	if due := p.deadline(allowed); canPause && !due.IsZero() && !now.Before(due) {
+		c.saving = true
+		c.close()
+		if u.phone != nil {
+			u.phone.clearLink()
+		}
+	}
+	idle := !c.running && !radioBusy(c.radio)
+	resume := c.saving && idle && u.phone != nil && u.phone.mode != phoneOff
+	if idle {
+		p.update(u, now, allowed)
+		c.saving = false
+	}
+	if resume {
+		// save runs after the controller and the loop's ordinary wake deadline
+		// was chosen. Wake once to restart even with an asleep display.
+		return now.Add(minimumLoopWait)
+	}
+	// While draining, BLE supplies the wakeup. Do not return an expired save
+	// deadline and spin the sleeping UI until the disconnect completes.
+	return p.deadline(allowed && (idle || canPause) && !c.saving)
 }

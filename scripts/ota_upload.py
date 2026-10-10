@@ -94,6 +94,28 @@ def progress(done, total, **kwargs):
         last_progress = percent // 5
         print(f'Upload {percent}% ({done}/{total} bytes)', flush=True)
 
+
+def connection_output(raw, address):
+    """Bounded terminal detail from connection setup only, before DFU writes."""
+    if isinstance(raw, bytes):
+        text = raw[-4096:].decode('utf-8', errors='replace')
+    elif isinstance(raw, str):
+        text = raw[-4096:]
+    else:
+        return 'No gatttool output.'
+    # Remove terminal formatting/control sequences before making a single line.
+    text = re.sub(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])', '', text)
+    text = ''.join(char if char.isprintable() else ' ' for char in text)
+    for separator in (':', '-', '_', ''):
+        identity = address.replace(':', separator)
+        if identity:
+            text = re.sub(re.escape(identity), '[watch address removed]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b(?:[a-f\d]{2}[:-]){5}[a-f\d]{2}\b', '[device address removed]', text, flags=re.IGNORECASE)
+    # No firmware is sent during setup; also exclude long hex dumps defensively.
+    text = re.sub(r'\b[a-f\d]{32,}\b', '[hex data omitted]', text, flags=re.IGNORECASE)
+    return ' '.join(text.split())[-512:] or 'No gatttool output.'
+
+
 def sender_type():
     class Sender(legacy.BleDfuControllerLegacy):
         def __init__(self, binary, init, address, adapter):
@@ -105,6 +127,24 @@ def sender_type():
             self.sent_bytes = 0
             self.ble_conn = pexpect.spawn('/usr/bin/gatttool', ['-i', adapter, '-b', address, '-t', 'random', '--interactive'], timeout=30)
             self.ble_conn.delaybeforesend = 0
+
+        def scan_and_connect(self, timeout=2):
+            # The pinned implementation swallows TIMEOUT and loses gatttool's
+            # reason. Retain setup detail without logging any later DFU traffic.
+            self.connection_failure = None
+            stage = 'waiting for the gatttool prompt'
+            print('Connecting to the selected recovery watch.', flush=True)
+            try:
+                self.ble_conn.expect(rb'\[LE\]>', timeout=timeout)
+                stage = 'connecting to the recovery watch'
+                self.ble_conn.sendline('connect')
+                self.ble_conn.expect(rb'.*Connection successful.*', timeout=timeout)
+            except (pexpect.TIMEOUT, pexpect.EOF) as error:
+                outcome = 'timed out' if isinstance(error, pexpect.TIMEOUT) else 'gatttool exited'
+                detail = connection_output(self.ble_conn.before, self.target_mac)
+                self.connection_failure = f'Connection setup {outcome} while {stage}. gatttool: {detail}'
+                return False
+            return True
 
         def verify_service(self):
             self.ble_conn.sendline('primary')
@@ -176,7 +216,7 @@ def main():
         try:
             # Direct address connection: do not spend the recovery window scanning.
             if not sender.scan_and_connect(timeout=12):
-                raise RuntimeError('Connection failed before transfer. Restart recovery and retry.')
+                raise RuntimeError(f'{sender.connection_failure} No firmware sent. Restart recovery and retry.')
             sender.verify_service()
             sender.input_setup()
             sender.start()

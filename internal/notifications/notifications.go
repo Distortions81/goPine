@@ -4,8 +4,9 @@ package notifications
 import "unicode/utf8"
 
 const (
-	MaxPacket = 103 // Three-byte companion header and up to 100 text bytes.
-	Capacity  = 4
+	MaxPacket   = 103 // Three-byte companion header and up to 100 text bytes.
+	Capacity    = 4
+	ApplePacket = 147
 )
 
 type Message struct {
@@ -14,6 +15,82 @@ type Message struct {
 	Body     [100]byte
 	Category byte
 	Unread   bool
+	Apple    bool
+	RemoteID uint32
+}
+
+// ApplyApple handles bounded ANCS records from the authenticated iPhone link.
+// IDs belong to one ANCS session; clearing the session preserves Android ANS.
+func (b *Inbox) ApplyApple(packet []byte) (changed, buzz bool) {
+	if len(packet) != ApplePacket || packet[4] > 3 {
+		return false, false
+	}
+	if packet[4] == 3 {
+		for i := b.Count - 1; i >= 0; i-- {
+			if b.Messages[i].Apple {
+				b.Dismiss(b.Messages[i].ID)
+				changed = true
+			}
+		}
+		return changed, false
+	}
+	uid := uint32(packet[0]) | uint32(packet[1])<<8 | uint32(packet[2])<<16 | uint32(packet[3])<<24
+	existing := -1
+	for i := 0; i < b.Count; i++ {
+		if b.Messages[i].Apple && b.Messages[i].RemoteID == uid {
+			existing = i
+			break
+		}
+	}
+	if packet[4] == 2 {
+		if existing >= 0 {
+			b.Dismiss(b.Messages[existing].ID)
+			return true, false
+		}
+		return false, false
+	}
+	m := Message{Apple: true, RemoteID: uid, Unread: true, Category: appleCategory(packet[5])}
+	clean(m.Title[:], packet[7:47])
+	clean(m.Body[:], packet[47:])
+	if m.Title[0] == 0 && m.Body[0] == 0 {
+		return false, false
+	}
+	if existing >= 0 {
+		m.ID = b.Messages[existing].ID
+		m.Unread = b.Messages[existing].Unread
+		b.Messages[existing] = m
+		b.Revision++
+	} else {
+		b.Revision++
+		if b.Revision == 0 {
+			b.Revision++
+		}
+		m.ID = b.Revision
+		for i := min(b.Count, Capacity-1); i > 0; i-- {
+			b.Messages[i] = b.Messages[i-1]
+		}
+		b.Messages[0] = m
+		b.Count = min(b.Count+1, Capacity)
+	}
+	// Silent and pre-existing notifications populate the inbox without buzzing.
+	return true, packet[4] == 0 && existing < 0 && packet[6]&5 == 0
+}
+func appleCategory(category byte) byte {
+	switch category {
+	case 1:
+		return 3
+	case 2:
+		return 4
+	case 3:
+		return 6
+	case 4:
+		return 5
+	case 5:
+		return 7
+	case 6:
+		return 1
+	}
+	return 0
 }
 
 type Inbox struct {

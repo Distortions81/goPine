@@ -461,3 +461,16 @@ func TestFlipRecordCompatibility(t *testing.T) {
 		t.Fatal("flip did not round-trip")
 	}
 }
+
+func TestPhoneAutoRecordCompatibility(t *testing.T) {
+	r := Record{HasSettings: true, Settings: Settings{CountdownSeconds: 300}}
+	b := encode(r)
+	if got, ok := decode(&b); !ok || got.Settings.PhoneAuto {
+		t.Fatal("legacy reserved byte must keep phone off")
+	}
+	r.Settings.PhoneAuto = true
+	b = encode(r)
+	if got, ok := decode(&b); !ok || !got.Settings.PhoneAuto {
+		t.Fatal("auto phone choice did not round-trip")
+	}
+}

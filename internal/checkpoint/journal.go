@@ -51,6 +51,7 @@ type Settings struct {
 	CountdownSeconds uint32
 	TouchWake        bool
 	FlipScreen       bool
+	PhoneAuto        bool
 }
 
 // Runtime timestamps are local calendar fields encoded as Unix milliseconds,
@@ -289,6 +290,9 @@ func encode(r Record) [RecordSize]byte {
 	if r.Settings.FlipScreen {
 		b[145] = 1
 	}
+	if r.Settings.PhoneAuto {
+		b[146] = 1
+	}
 	binary.LittleEndian.PutUint32(b[RecordSize-8:RecordSize-4], ieeecrc.Checksum(b[:RecordSize-8]))
 	binary.LittleEndian.PutUint32(b[RecordSize-4:], recordCommit)
 	return b
@@ -321,8 +325,9 @@ func decode(b *[RecordSize]byte) (Record, bool) {
 	r.Runtime.AlertMillis = binary.LittleEndian.Uint32(b[140:144])
 	r.Settings.TouchWake = b[144] == 1
 	r.Settings.FlipScreen = b[145] == 1
-	valid = valid && b[60]>>4 == 0 && b[144] <= 1 && b[145] <= 1
-	for _, v := range b[146 : RecordSize-8] {
+	r.Settings.PhoneAuto = b[146] == 1
+	valid = valid && b[60]>>4 == 0 && b[144] <= 1 && b[145] <= 1 && b[146] <= 1
+	for _, v := range b[147 : RecordSize-8] {
 		valid = valid && v == 0
 	}
 	valid = valid && (!r.HasSettings || r.Settings.valid()) && (!r.HasRuntime || (r.HasSettings && r.Runtime.valid()))

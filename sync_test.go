@@ -32,6 +32,30 @@ type drainingTimeRadio struct {
 	draining bool
 }
 
+type controllerTestRadio struct {
+	fakeTimeRadio
+	controllers, hosts int
+}
+
+func (r *controllerTestRadio) Service()           { r.hosts++ }
+func (r *controllerTestRadio) ServiceController() { r.controllers++ }
+func TestDrawingDefersBluetoothHostWorkToMainLoop(t *testing.T) {
+	previous := activeTimeRadio
+	defer func() { activeTimeRadio = previous }()
+	r := &controllerTestRadio{}
+	activeTimeRadio = r
+	serviceTimeRadio()
+	if r.controllers != 1 || r.hosts != 0 {
+		t.Fatal("draw/Wait entered host callbacks")
+	}
+	u := newWatchUI(firmwareConfirmed)
+	c := timeSyncController{radio: r}
+	c.update(&u, time.Now(), 80)
+	if r.hosts != 1 {
+		t.Fatal("main loop did not service deferred host work")
+	}
+}
+
 func (f *drainingTimeRadio) Stop()      { f.draining = true }
 func (f *drainingTimeRadio) Busy() bool { return f.draining }
 func (f *drainingTimeRadio) Service()   { f.draining = false }
@@ -57,8 +81,9 @@ func TestIdleWaitMustFinishRadioShutdown(t *testing.T) {
 }
 func syncUI(now time.Time) watchUI {
 	u := newWatchUI(firmwareConfirmed)
-	u.page = pageTimeSettings
-	u.handle(inputEvent{Kind: inputTap, X: 120, Y: 200}, now, firmwareConfirmed, powerStatus{})
+	// Exercise the legacy bounded receiver directly; normal navigation uses Phone.
+	u.sync.Start(now)
+	u.page = pageTimeSync
 	return u
 }
 func TestTimeSyncRequiresApprovalAndAccountsForDelay(t *testing.T) {

@@ -2,7 +2,9 @@
 #define GOPINE_NPL_H
 #include <stdint.h>
 #include <stdbool.h>
+#ifndef BLE_NPL_OS_ALIGNMENT
 #define BLE_NPL_OS_ALIGNMENT 4
+#endif
 #define BLE_NPL_TIME_FOREVER UINT32_MAX
 typedef uint32_t ble_npl_time_t;
 typedef int32_t ble_npl_stime_t;
@@ -12,6 +14,8 @@ struct ble_npl_callout { struct ble_npl_event ev; struct ble_npl_eventq *evq; st
 struct ble_npl_mutex { unsigned depth; };
 struct ble_npl_sem { uint16_t count; };
 void gopine_ble_pump(void);
+void gopine_ble_controller_pump(void);
 void gopine_ble_set_host_queue(struct ble_npl_eventq *q);
 uint32_t gopine_ble_next_work(void);
+bool gopine_ble_host_work_pending(void);
 #endif

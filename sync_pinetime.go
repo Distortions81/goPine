@@ -35,9 +35,10 @@ func (pineTimeRadio) Start(value [10]byte, battery uint8) error {
 	}
 	return nil
 }
-func (pineTimeRadio) Stop()      { ble.Stop() }
-func (pineTimeRadio) Service()   { ble.Service() }
-func (pineTimeRadio) Busy() bool { return ble.Busy() }
+func (pineTimeRadio) Stop()              { ble.Stop() }
+func (pineTimeRadio) Service()           { ble.Service() }
+func (pineTimeRadio) ServiceController() { ble.ServiceController() }
+func (pineTimeRadio) Busy() bool         { return ble.Busy() }
 func (pineTimeRadio) Take() ([10]byte, int, time.Duration, error) {
 	value, size, age := ble.Take()
 	var err error
@@ -61,8 +62,9 @@ func (pineTimeRadio) TakeMusic() ([87]byte, bool, error) {
 	}
 	return value, changed, err
 }
-func (pineTimeRadio) TakeNotification() ([103]byte, int) { return ble.TakeNotification() }
-func (pineTimeRadio) UpdateBattery(value uint8)          { ble.UpdateBattery(value) }
+func (pineTimeRadio) TakeNotification() ([103]byte, int)      { return ble.TakeNotification() }
+func (pineTimeRadio) TakeAppleNotification() ([147]byte, int) { return ble.TakeAppleNotification() }
+func (pineTimeRadio) UpdateBattery(value uint8)               { ble.UpdateBattery(value) }
 func (pineTimeRadio) StartUpdate(battery uint8) error {
 	if rc := ble.StartUpdate(battery); rc != 0 {
 		return errors.New("update Bluetooth failed")
@@ -77,11 +79,13 @@ func (pineTimeRadio) MusicCommand(command byte, generation uint32) error {
 	}
 	return nil
 }
-func (pineTimeRadio) HasUpdate() bool          { return ble.HasUpdate() }
-func (pineTimeRadio) AcknowledgeUpdates()      { ble.AcknowledgeUpdates() }
-func (pineTimeRadio) IdleDelay() time.Duration { return time.Duration(ble.IdleMS()) * time.Millisecond }
-func (pineTimeRadio) PairingCode() uint32      { return ble.PairingCode() }
-func (pineTimeRadio) BondStatus() int          { return ble.BondStatus() }
+func (pineTimeRadio) HasUpdate() bool            { return ble.HasUpdate() }
+func (pineTimeRadio) AcknowledgeUpdates()        { ble.AcknowledgeUpdates() }
+func (pineTimeRadio) IdleDelay() time.Duration   { return time.Duration(ble.IdleMS()) * time.Millisecond }
+func (pineTimeRadio) PairingCode() uint32        { return ble.PairingCode() }
+func (pineTimeRadio) PairingDiagnostics() uint32 { return ble.PairingDiagnostics() }
+func (pineTimeRadio) PairingProgress() uint16    { return ble.PairingProgress() }
+func (pineTimeRadio) BondStatus() int            { return ble.BondStatus() }
 func (pineTimeRadio) ForgetPhone() error {
 	if ble.ForgetPhone() != 0 {
 		return errors.New("Could not forget phone")

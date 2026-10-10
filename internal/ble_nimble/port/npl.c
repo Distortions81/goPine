@@ -116,6 +116,20 @@ uint32_t gopine_ble_next_work(void) {
     return delay;
 }
 void gopine_ble_set_host_queue(struct ble_npl_eventq *q){host_queue=q;}
+// Input waits pump the controller only. Return to the shallow application loop
+// as soon as host work is queued or due; preventing WFE alone would just spin
+// inside Wait until its unrelated display refresh deadline.
+bool gopine_ble_host_work_pending(void) {
+    uint32_t s=ble_npl_hw_enter_critical();
+    bool pending=host_queue && host_queue->head;
+    uint32_t now=ble_npl_time_get();
+    for(struct ble_npl_callout *co=callouts;!pending && co;co=co->next) {
+        if(co->active && co->evq==host_queue && host_queue &&
+           (int32_t)(now-co->deadline)>=0)pending=true;
+    }
+    ble_npl_hw_exit_critical(s);
+    return pending;
+}
 static void pump(bool controller_only){
     uint32_t now=ble_npl_time_get();
     for(struct ble_npl_callout *co=callouts;co;co=co->next){
@@ -128,4 +142,7 @@ static void pump(bool controller_only){
     for(struct ble_npl_eventq *q=queues;q;q=q->next){if(q->busy || (controller_only && q==host_queue))continue;q->busy=true;for(int i=0;i<16;i++){struct ble_npl_event *ev=ble_npl_eventq_get(q,0);if(!ev)break;ble_npl_event_run(ev);}q->busy=false;}
 }
 void gopine_ble_pump(void){pump(false);}
+// Drawing and input waits service radio timing without entering pairing,
+// attribute discovery, or other host callbacks beneath their Go stack frames.
+void gopine_ble_controller_pump(void){pump(true);}
 void ble_npl_time_delay(uint32_t ticks){uint32_t start=ble_npl_time_get();while((uint32_t)(ble_npl_time_get()-start)<ticks)gopine_ble_pump();}

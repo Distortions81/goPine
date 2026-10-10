@@ -75,6 +75,7 @@ fi
 if [[ $target == *-ble.json ]]; then
   # A successful link does not bound TinyGo's indirect/recursive task stack.
   python3 scripts/check-resources.py "$output/gopine-$version.elf" \
+    --ble-stack-usage build/ble/stack-usage.txt \
     --report "$output/gopine-resources-$version.json"
 fi
 go run ./cmd/otapack -elf "$output/gopine-$version.elf" -version "$version" \

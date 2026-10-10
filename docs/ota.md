@@ -126,6 +126,17 @@ device boot, KEEP, wake reliability or battery life. The earlier locally tested
 
 ## Legacy recovery update with one command (Linux)
 
+On **goPine 0.3.13 and newer**, Settings → Firmware Update opens the in-app
+receiver, not the recovery clock. If that connection is unusable (including the
+0.3.15 Linux pairing conflict), prepare the uploader below first, then use the
+[bootloader's recovery gesture](https://github.com/InfiniTimeOrg/pinetime-mcuboot-bootloader#boot-flow):
+hold the button during boot until the logo reaches red to select the recovery
+image. Blue selects the previous image instead. This is the upstream bootloader
+procedure; it is not a new goPine recovery-screen control. Recovery replaces the
+running application, so have the replacement ZIP and uploader ready first.
+The GitHub browser updater cannot upload to the recovery clock; use this Legacy
+DFU sender or a compatible companion application's firmware update flow.
+
 Install Python 3 with venv support, Git, Go (the version in `go.mod`), TinyGo
 0.42.0, Clang/LLVM (`clang` and `llvm-ar`), and BlueZ's `gatttool`.
 Put Go and TinyGo on `PATH`, or set `TINYGO`
